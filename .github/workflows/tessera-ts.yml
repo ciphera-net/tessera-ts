@@ -1,0 +1,257 @@
+name: tessera-ts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# ---------------------------------------------------------------------------
+# WORKSPACE LAYOUT
+#
+# Every job that needs cross-repo path/replace deps checks out all required
+# repos as SIBLINGS under $GITHUB_WORKSPACE so relative paths resolve:
+#
+#   $GITHUB_WORKSPACE/
+#     tessera-ts/          ← this repo
+#     ciphera-tessera/     ← ciphera-net/tessera (private Rust core)
+#     tessera-go/          ← ciphera-net/tessera-go (private Go SDK)
+#
+# Path arithmetic:
+#   tessera-ts/crates/tessera-wasm/Cargo.toml
+#     ciphera-tessera = { path = "../../../ciphera-tessera" }
+#     → from tessera-ts/crates/tessera-wasm/ go up 3 → $GITHUB_WORKSPACE/ciphera-tessera  ✓
+#
+#   tessera-ts/harness/{vault,blindindex,vectors}-parity/go.mod
+#     replace github.com/ciphera-net/tessera-go => ../../../tessera-go
+#     → from tessera-ts/harness/<parity-dir>/ go up 3 → $GITHUB_WORKSPACE/tessera-go      ✓
+#
+# OWNER PREREQUISITE: the secret CI_REPO_TOKEN must be provisioned on the
+# tessera-ts repo (Settings → Secrets → Actions). It must be a PAT (classic)
+# or a fine-grained token with "Contents: read" on both ciphera-net/tessera
+# and ciphera-net/tessera-go. Mirror the same token already used in tessera-go/ci.yml.
+# ---------------------------------------------------------------------------
+
+jobs:
+  # =========================================================================
+  # JOB 1 — rust
+  # Lint and build the WASM crate (no sidecar, no Node). Fast gate on Rust
+  # hygiene before running the heavier integration jobs.
+  # =========================================================================
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tessera-ts
+        uses: actions/checkout@v4
+        with:
+          path: tessera-ts
+
+      # Private Rust core needed for the path dep in Cargo.toml
+      - name: Checkout ciphera-tessera (private)
+        uses: actions/checkout@v4
+        with:
+          repository: ciphera-net/tessera
+          path: ciphera-tessera
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Install Rust stable + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      # Cache: scope the cache to the workspace member that actually has a
+      # Cargo.lock (tessera-ts workspace root = tessera-ts/Cargo.toml).
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tessera-ts
+
+      - name: cargo fmt --check
+        working-directory: tessera-ts
+        run: cargo fmt --check
+
+      - name: cargo clippy (wasm32)
+        working-directory: tessera-ts
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+
+      - name: cargo build (wasm32)
+        working-directory: tessera-ts
+        run: cargo build --target wasm32-unknown-unknown
+
+  # =========================================================================
+  # JOB 2 — handshake-gate   (needs: rust)
+  # Builds the sidecar + WASM pack outputs, then runs the node:test handshake
+  # harness. This is the explicit gate: if the round-trip register→login
+  # over the IPC channel is broken, ts-tests never starts.
+  # =========================================================================
+  handshake-gate:
+    needs: [rust]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tessera-ts
+        uses: actions/checkout@v4
+        with:
+          path: tessera-ts
+
+      - name: Checkout ciphera-tessera (private)
+        uses: actions/checkout@v4
+        with:
+          repository: ciphera-net/tessera
+          path: ciphera-tessera
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Install Rust stable + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tessera-ts -> tessera-ts/target
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # Build the sidecar binary from the private Rust core.
+      # The binary path is $GITHUB_WORKSPACE/ciphera-tessera/target/release/tessera-sidecar
+      - name: Build tessera-sidecar
+        working-directory: ciphera-tessera
+        run: cargo build --release --bin tessera-sidecar
+
+      # wasm-pack writes two output trees:
+      #   tessera-ts/packages/tessera-ts/wasm/web/
+      #   tessera-ts/packages/tessera-ts/wasm/node/
+      # The script is ROOT-relative (root = tessera-ts repo root).
+      - name: Build WASM (web + node targets)
+        working-directory: tessera-ts
+        run: bash packages/tessera-ts/scripts/build-wasm.sh
+
+      # Gate: node:test harness. Uses TESSERA_SIDECAR_BIN to locate the
+      # freshly-built sidecar. No npm install needed — the harness file is
+      # plain ESM with node:test imports only.
+      - name: Run handshake gate
+        working-directory: tessera-ts
+        env:
+          TESSERA_SIDECAR_BIN: ${{ github.workspace }}/ciphera-tessera/target/release/tessera-sidecar
+        run: node --test harness/handshake/handshake.test.mjs
+
+  # =========================================================================
+  # JOB 3 — ts-tests   (needs: handshake-gate)
+  # Full TypeScript test suite: unit tests, parity tests (TS↔Go), and vector
+  # tests. The parity harnesses shell out to `go` against the tessera-go
+  # sibling, so this job checks out all three repos.
+  # =========================================================================
+  ts-tests:
+    needs: [handshake-gate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tessera-ts
+        uses: actions/checkout@v4
+        with:
+          path: tessera-ts
+
+      - name: Checkout ciphera-tessera (private)
+        uses: actions/checkout@v4
+        with:
+          repository: ciphera-net/tessera
+          path: ciphera-tessera
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      # tessera-go is required by the parity harness replace directives:
+      #   harness/{vault,blindindex,vectors}-parity/go.mod:
+      #     replace github.com/ciphera-net/tessera-go => ../../../tessera-go
+      - name: Checkout tessera-go (private)
+        uses: actions/checkout@v4
+        with:
+          repository: ciphera-net/tessera-go
+          path: tessera-go
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Install Rust stable + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tessera-ts -> tessera-ts/target
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tessera-ts/packages/tessera-ts/package-lock.json
+
+      - name: Setup Go 1.25
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          # go.mod files live under harness subdirs, not the workspace root;
+          # pass one representative go.sum so setup-go can prime the module cache.
+          cache-dependency-path: tessera-ts/harness/vault-parity/go.sum
+
+      # Rebuild sidecar for the sidecar-backed vitest tests.
+      - name: Build tessera-sidecar
+        working-directory: ciphera-tessera
+        run: cargo build --release --bin tessera-sidecar
+
+      - name: Build WASM (web + node targets)
+        working-directory: tessera-ts
+        run: bash packages/tessera-ts/scripts/build-wasm.sh
+
+      - name: npm ci
+        working-directory: tessera-ts/packages/tessera-ts
+        run: npm ci
+
+      # vitest covers:
+      #   • packages/tessera-ts/src/**  (unit tests)
+      #   • harness/vault-parity        (Go↔TS vault parity)
+      #   • harness/blindindex-parity   (Go↔TS blind index parity)
+      #   • harness/vectors             (cross-language test vectors)
+      # All parity tests use TESSERA_SIDECAR_BIN and call `go run` against
+      # the tessera-go sibling resolved via the replace directive above.
+      - name: vitest run
+        working-directory: tessera-ts/packages/tessera-ts
+        env:
+          TESSERA_SIDECAR_BIN: ${{ github.workspace }}/ciphera-tessera/target/release/tessera-sidecar
+        run: npx vitest run
+
+      - name: TypeScript type-check
+        working-directory: tessera-ts/packages/tessera-ts
+        run: npx tsc --noEmit
+
+  # =========================================================================
+  # DEFERRED JOB — browser  (NOT YET IMPLEMENTED — placeholder only)
+  #
+  # This job will run once the Playwright suite is authored (a future task).
+  # It will:
+  #   • Install Playwright with Chromium + WebKit browsers only
+  #   • Build the wasm/web target (already done above in ts-tests)
+  #   • Serve tessera-ts over a local HTTP server (e.g. `npx serve`)
+  #   • Run web-target WASM vault round-trips in real browser contexts,
+  #     verifying that wasm-bindgen glue + WebCrypto integration works
+  #     across both engines
+  #   • Use Playwright's virtual authenticator API to exercise WebAuthn-PRF
+  #     key derivation (additive passkey unlock path in passkey.ts)
+  #   • needs: [ts-tests]  — only run after all unit + parity gates pass
+  #   • runs-on: ubuntu-latest with xvfb-run if headed mode is needed
+  #
+  # Unblock by: writing harness/browser/*.spec.ts and adding
+  # `npx playwright install --with-deps chromium webkit` to this job.
+  # =========================================================================
+  # browser:
+  #   needs: [ts-tests]
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - ... (not yet implemented)

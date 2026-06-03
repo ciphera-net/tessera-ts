@@ -3,3 +3,29 @@ name = "tessera-wasm"
 version = "0.0.1"
 edition = "2024"
 license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Cross-repo build dep on the core crate. LOCAL dev: relative path to the sibling clone (the gate in
+# Task 6 runs against local core, no push needed). CI / post-gate: replace with a PINNED git dep
+# `ciphera-tessera = { git = "https://github.com/ciphera-net/tessera", rev = "<sha>" }` (Task 17 checks
+# out the private core via the shared PAT). Keep the rev pinned — never float on a branch.
+[dependencies]
+ciphera-tessera = { path = "../../../ciphera-tessera" }
+wasm-bindgen = "0.2"
+zeroize = "1"
+# getrandom's `js` feature wires OsRng → crypto.getRandomValues on wasm32-unknown-unknown. opaque-ke
+# 4.x → rand 0.8 → rand_core 0.6 → getrandom 0.2. A DIRECT `getrandom` dep with `js` here is the
+# canonical, sufficient activation (Cargo unifies it onto the transitive getrandom used by rand_core
+# under resolver "2"); we do NOT need a direct `rand` dep, and do NOT enable `js` in the core crate.
+# A missing/ineffective activation does NOT fail at compile time — it panics in OsRng at runtime, and
+# the Task 6 handshake gate (which calls register_start → OsRng) is what catches it.
+# Enabled unconditionally (not target-gated): harmless on native because getrandom 0.2 gates its js
+# backend behind its OWN `cfg(target_arch = "wasm32")`, so native builds ignore the feature and use
+# the OS RNG. (Seeing `js-sys` under `cargo tree` on a native target is from the wasm-bindgen-test
+# dev-dep, not this line.)
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

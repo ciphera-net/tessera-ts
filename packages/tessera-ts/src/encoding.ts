@@ -31,3 +31,17 @@ export function toBase64UrlUnpadded(bytes: Uint8Array): string {
 export function utf8(s: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
+
+/**
+ * Bridge the TS 5.7+ typed-array generic split at the WebCrypto boundary.
+ *
+ * TS 5.7 split `Uint8Array` into `Uint8Array<ArrayBufferLike>`, but lib.dom's WebCrypto signatures
+ * (`BufferSource`) require the `ArrayBuffer`-backed form (`SharedArrayBuffer` is rejected). Every byte
+ * value this SDK feeds to WebCrypto is ArrayBuffer-backed at runtime — fresh `new Uint8Array(n)`,
+ * `crypto.getRandomValues`, `TextEncoder`, copies out of WASM, and `@scure/bip39` output — and a
+ * `Uint8Array` is always a valid `BufferSource` at runtime regardless. This is therefore a sound,
+ * zero-copy re-view that closes a TYPE-ONLY gap; use it only when handing bytes to `crypto.subtle`.
+ */
+export function wcView(b: Uint8Array): Uint8Array<ArrayBuffer> {
+  return b as Uint8Array<ArrayBuffer>;
+}

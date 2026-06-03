@@ -1,3 +1,7 @@
 /target
 node_modules
 packages/*/wasm/
+
+# Playwright
+test-results
+playwright-report

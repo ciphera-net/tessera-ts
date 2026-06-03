@@ -231,27 +231,60 @@ jobs:
         working-directory: tessera-ts/packages/tessera-ts
         run: npx tsc --noEmit
 
-  # =========================================================================
-  # DEFERRED JOB — browser  (NOT YET IMPLEMENTED — placeholder only)
-  #
-  # This job will run once the Playwright suite is authored (a future task).
-  # It will:
-  #   • Install Playwright with Chromium + WebKit browsers only
-  #   • Build the wasm/web target (already done above in ts-tests)
-  #   • Serve tessera-ts over a local HTTP server (e.g. `npx serve`)
-  #   • Run web-target WASM vault round-trips in real browser contexts,
-  #     verifying that wasm-bindgen glue + WebCrypto integration works
-  #     across both engines
-  #   • Use Playwright's virtual authenticator API to exercise WebAuthn-PRF
-  #     key derivation (additive passkey unlock path in passkey.ts)
-  #   • needs: [ts-tests]  — only run after all unit + parity gates pass
-  #   • runs-on: ubuntu-latest with xvfb-run if headed mode is needed
-  #
-  # Unblock by: writing harness/browser/*.spec.ts and adding
-  # `npx playwright install --with-deps chromium webkit` to this job.
-  # =========================================================================
-  # browser:
-  #   needs: [ts-tests]
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - ... (not yet implemented)
+  # Real-browser matrix: web-target wasm + WebCrypto on Chromium + WebKit, plus the WebAuthn-PRF
+  # ceremony via a CDP virtual authenticator (Chromium). Needs only the core sibling (for the wasm
+  # path-dep build) — NOT the sidecar or tessera-go (the browser specs don't use them).
+  browser:
+    needs: [handshake-gate]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tessera-ts
+        uses: actions/checkout@v4
+        with:
+          path: tessera-ts
+
+      - name: Checkout ciphera-tessera (private)
+        uses: actions/checkout@v4
+        with:
+          repository: ciphera-net/tessera
+          path: ciphera-tessera
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Install Rust stable + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tessera-ts -> tessera-ts/target
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tessera-ts/packages/tessera-ts/package-lock.json
+
+      - name: Build WASM (web + node targets)
+        working-directory: tessera-ts
+        run: bash packages/tessera-ts/scripts/build-wasm.sh
+
+      - name: npm ci
+        working-directory: tessera-ts/packages/tessera-ts
+        run: npm ci
+
+      - name: Install Playwright browsers (Chromium + WebKit)
+        working-directory: tessera-ts/packages/tessera-ts
+        run: npx playwright install --with-deps chromium webkit
+
+      # crypto.spec.ts (chromium+webkit): web-target wasm load + blind-index vectors + vault/vmk.
+      # passkey-prf.spec.ts (chromium): real WebAuthn-PRF via CDP virtual authenticator — SKIPS with a
+      # documented reason if this Chromium build's virtual authenticator does not surface PRF.
+      - name: Playwright browser matrix
+        working-directory: tessera-ts/packages/tessera-ts
+        run: npx playwright test

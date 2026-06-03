@@ -3,8 +3,8 @@
 // — they never persist and never cross the wire. The VMK is held as a non-extractable CryptoKey inside
 // the returned Session; the raw VMK never leaves WASM/JS linear memory at rest.
 import { blindIndexString } from './blindIndex';
-import { loginOpaque, registerOpaque } from './opaque';
-import { generateAndWrap, openVaultKey } from './vmk';
+import { loginOpaque, registerOpaque, resetPasswordOpaque } from './opaque';
+import { generateAndWrap, openVaultKey, rewrapForMethod } from './vmk';
 import { newRecoveryPhrase, recoverySecret } from './recovery';
 import { open as vaultOpen, seal as vaultSeal, type VaultKey } from './vault';
 import { fromBase64Std, toBase64Std } from './encoding';
@@ -22,6 +22,13 @@ export interface Session {
     seal(context: string, plaintext: Uint8Array): Promise<Uint8Array>;
     open(context: string, envelope: Uint8Array): Promise<Uint8Array>;
   };
+}
+
+export interface RecoverySession extends Session {
+  /** Re-key auth to a new password. Preserves the vault (the SAME VMK is re-wrapped under the new
+   *  export_key — the vault content is never re-encrypted). Single-use: the recovery secret is zeroed
+   *  after, so a second call will fail. */
+  resetPassword(newPassword: Uint8Array): Promise<void>;
 }
 
 function sessionFor(vmk: VaultKey, sessionKeyB64: string | null): Session {
@@ -79,6 +86,44 @@ export class Tessera {
     } finally {
       exportKey.fill(0);
     }
+  }
+
+  /** Recover via the BIP-39 phrase: unwrap the VMK from the 'recovery' wrap → a Session (no OPAQUE
+   *  session key) plus a single-use `resetPassword`. The recovery secret + wrap blob are held in the
+   *  returned closure ONLY because the session VMK is non-extractable and cannot itself be re-wrapped;
+   *  resetPassword re-derives the raw VMK from the recovery wrap and re-wraps it under the new password,
+   *  so the vault is never re-encrypted. The recovery secret is zeroed once resetPassword runs. */
+  async recoverWithPhrase({
+    email,
+    phrase,
+  }: {
+    email: string;
+    phrase: string;
+  }): Promise<RecoverySession> {
+    const credentialId = blindIndexString(email);
+    const recovSecret = recoverySecret(phrase); // throws on bad checksum
+    const recoveryWrap = await this.transport.getWrap({ credentialId, method: 'recovery' });
+    if (!recoveryWrap) throw new Error('tessera: no recovery wrap for this account');
+    const recoveryBlob = fromB64(recoveryWrap.blobB64);
+    const vmk = await openVaultKey(recoveryBlob, recovSecret, 'recovery'); // throws if phrase is wrong
+    const transport = this.transport;
+    return {
+      ...sessionFor(vmk, /* no OPAQUE session on the recovery path */ null),
+      async resetPassword(newPassword: Uint8Array): Promise<void> {
+        const { exportKey } = await resetPasswordOpaque(transport, credentialId, newPassword);
+        try {
+          // Re-wrap the SAME VMK (re-derived from the recovery wrap) under the new export_key.
+          const newOpaqueWrap = await rewrapForMethod(
+            { blob: recoveryBlob, secret: recovSecret, method: 'recovery' },
+            { secret: exportKey, method: 'opaque' },
+          );
+          await transport.putWraps({ credentialId, wraps: { opaque: b64(newOpaqueWrap) } });
+        } finally {
+          exportKey.fill(0);
+          recovSecret.fill(0);
+        }
+      },
+    };
   }
 }
 

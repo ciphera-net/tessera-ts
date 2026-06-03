@@ -6,6 +6,7 @@ import { blindIndexString } from './blindIndex';
 import { loginOpaque, registerOpaque, resetPasswordOpaque } from './opaque';
 import { generateAndWrap, openVaultKey, rewrapForMethod } from './vmk';
 import { newRecoveryPhrase, recoverySecret } from './recovery';
+import type { PrfProvider } from './passkey';
 import { open as vaultOpen, seal as vaultSeal, type VaultKey } from './vault';
 import { fromBase64Std, toBase64Std } from './encoding';
 import type { Transport } from './transport';
@@ -124,6 +125,54 @@ export class Tessera {
         }
       },
     };
+  }
+
+  /** Enable passwordless unlock (ADDITIVE). RE-AUTHENTICATES with the password (a non-extractable
+   *  session VMK cannot be re-wrapped), then re-wraps the VMK from the 'opaque' wrap into a 'webauthn'
+   *  wrap keyed by the PRF output. `prf` runs the WebAuthn create() ceremony (see passkey.evaluatePrf).
+   *  Both the export_key and the PRF output are zeroed after use. */
+  async enablePasskey({
+    email,
+    password,
+    prf,
+  }: {
+    email: string;
+    password: Uint8Array;
+    prf: PrfProvider;
+  }): Promise<void> {
+    const credentialId = blindIndexString(email);
+    const { exportKey } = await loginOpaque(this.transport, credentialId, password); // re-auth
+    try {
+      const prfOutput = await prf();
+      try {
+        const opaqueWrap = await this.transport.getWrap({ credentialId, method: 'opaque' });
+        if (!opaqueWrap) throw new Error('tessera: no opaque wrap for this account');
+        const webauthnWrap = await rewrapForMethod(
+          { blob: fromB64(opaqueWrap.blobB64), secret: exportKey, method: 'opaque' },
+          { secret: prfOutput, method: 'webauthn' },
+        );
+        await this.transport.putWraps({ credentialId, wraps: { webauthn: b64(webauthnWrap) } });
+      } finally {
+        prfOutput.fill(0);
+      }
+    } finally {
+      exportKey.fill(0);
+    }
+  }
+
+  /** Passwordless unlock via the 'webauthn' wrap. `prf` runs the WebAuthn get() ceremony. No OPAQUE
+   *  handshake on this path, so the Session's sessionKeyB64 is null. The PRF output is zeroed after. */
+  async unlockWithPasskey({ email, prf }: { email: string; prf: PrfProvider }): Promise<Session> {
+    const credentialId = blindIndexString(email);
+    const prfOutput = await prf();
+    try {
+      const wrap = await this.transport.getWrap({ credentialId, method: 'webauthn' });
+      if (!wrap) throw new Error('tessera: no passkey wrap for this account');
+      const vmk = await openVaultKey(fromB64(wrap.blobB64), prfOutput, 'webauthn');
+      return sessionFor(vmk, null); // no OPAQUE session on the passkey path
+    } finally {
+      prfOutput.fill(0);
+    }
   }
 }
 

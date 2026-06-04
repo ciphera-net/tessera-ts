@@ -21,9 +21,11 @@ on:
 #     ciphera-tessera = { path = "../../../ciphera-tessera" }
 #     → from tessera-ts/crates/tessera-wasm/ go up 3 → $GITHUB_WORKSPACE/ciphera-tessera  ✓
 #
-#   tessera-ts/harness/{vault,blindindex,vectors}-parity/go.mod
+#   tessera-ts/harness/{vault,blindindex}-parity/go.mod
 #     replace github.com/ciphera-net/tessera-go => ../../../tessera-go
 #     → from tessera-ts/harness/<parity-dir>/ go up 3 → $GITHUB_WORKSPACE/tessera-go      ✓
+#   (Cross-language test VECTORS now live in ciphera-tessera/conformance/vectors; the Go generator
+#    moved to tessera-go/harness/vectors — neither is under tessera-ts/harness anymore.)
 #
 # OWNER PREREQUISITE: the secret CI_REPO_TOKEN must be provisioned on the
 # tessera-ts repo (Settings → Secrets → Actions). It must be a PAT (classic)
@@ -164,7 +166,7 @@ jobs:
           token: ${{ secrets.CI_REPO_TOKEN }}
 
       # tessera-go is required by the parity harness replace directives:
-      #   harness/{vault,blindindex,vectors}-parity/go.mod:
+      #   harness/{vault,blindindex}-parity/go.mod:
       #     replace github.com/ciphera-net/tessera-go => ../../../tessera-go
       - name: Checkout tessera-go (private)
         uses: actions/checkout@v4
@@ -215,12 +217,12 @@ jobs:
         run: npm ci
 
       # vitest covers:
-      #   • packages/tessera-ts/src/**  (unit tests)
-      #   • harness/vault-parity        (Go↔TS vault parity)
-      #   • harness/blindindex-parity   (Go↔TS blind index parity)
-      #   • harness/vectors             (cross-language test vectors)
-      # All parity tests use TESSERA_SIDECAR_BIN and call `go run` against
-      # the tessera-go sibling resolved via the replace directive above.
+      #   • packages/tessera-ts/src/**   (unit tests)
+      #   • harness/vault-parity         (Go↔TS vault parity)
+      #   • harness/blindindex-parity    (Go↔TS blind index parity)
+      #   • test/vectors.test.ts         (canonical conformance vectors from the ciphera-tessera sibling)
+      # The parity harnesses use TESSERA_SIDECAR_BIN and call `go run` against the tessera-go sibling
+      # (replace directives above); the vectors test reads ciphera-tessera/conformance/vectors.
       - name: vitest run
         working-directory: tessera-ts/packages/tessera-ts
         env:

@@ -16,7 +16,7 @@ Browser SDK for the Tessera authentication and vault system.
 - **BIP-39 (24-word / 256-bit) recovery phrase** — the mnemonic entropy is used directly as the VMK-wrap secret (no PBKDF2 indirection). Shown to the user once at registration.
 - **WebAuthn-PRF passwordless unlock** — additive. The password and recovery phrase remain valid at all times; an authenticator without PRF support simply cannot enroll the passkey path.
 
-The SDK is byte-for-byte interoperable with **tessera-go** (the Go server SDK) and the **Rust sidecar**. All three implementations share the pinned algorithm constants in `vectors/schema.md` and are validated by cross-language parity vectors in `vectors/`.
+The SDK is byte-for-byte interoperable with **tessera-go** (the Go server SDK) and the **Rust sidecar**. All three implementations share the pinned algorithm constants in the canonical conformance kit at `ciphera-net/tessera` (`conformance/schema.md` + `conformance/CONFORMANCE.md`) and are validated by cross-language parity vectors in `conformance/vectors/`.
 
 ---
 
@@ -363,7 +363,7 @@ cd packages/tessera-ts
 npm test
 ```
 
-Tests run with **vitest**. The parity test suite (`test/vectors.test.ts`) validates byte-exact blind-index vectors and vault open-parity vectors against the Go-generated snapshots in `vectors/`.
+Tests run with **vitest**. The parity test suite (`test/vectors.test.ts`) validates byte-exact blind-index vectors and vault open-parity vectors against the Go-generated snapshots in the canonical kit (`ciphera-net/tessera` → `conformance/vectors/`).
 
 Tests that require the **tessera-go sidecar** (OPAQUE handshake, recovery flow, passkey flow) read the sidecar binary path from `TESSERA_SIDECAR_BIN`. They are skipped automatically when the variable is unset.
 
@@ -371,7 +371,7 @@ Tests that require the **tessera-go sidecar** (OPAQUE handshake, recovery flow, 
 TESSERA_SIDECAR_BIN=/path/to/tessera-sidecar npm test
 ```
 
-Cross-language parity vectors are in `vectors/` (`blind-index.json`, `vault.json`) alongside `vectors/schema.md`, which is the authoritative contract for all pinned constants. The Go generator at `harness/vectors/gen_go.go` regenerates both files and performs an in-process round-trip assertion before writing output.
+Cross-language parity vectors are the canonical conformance kit in `ciphera-net/tessera` (`conformance/vectors/blind-index.json`, `conformance/vectors/vault.json`) alongside `conformance/schema.md` + `conformance/CONFORMANCE.md`, the authoritative contract for all pinned constants. The Go generator at `tessera-go/harness/vectors/gen_go.go` regenerates the files and performs an in-process round-trip assertion before writing output.
 
 A Playwright browser matrix (real WebAuthn virtual-authenticator, full in-browser WASM path) is a planned follow-up and is not yet part of the CI suite.
 

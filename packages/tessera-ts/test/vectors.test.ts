@@ -22,7 +22,9 @@ import { blindIndexString } from '../src/blindIndex';
 import { importVaultKey, open } from '../src/vault';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const VECTORS_DIR = join(here, '..', '..', '..', 'vectors');
+// test/ → packages/tessera-ts → packages → tessera-ts → (sibling) ciphera-tessera/conformance/vectors.
+// Same relative layout locally (under Tessera/) and in CI (sibling checkouts under the workspace root).
+const VECTORS_DIR = join(here, '..', '..', '..', '..', 'ciphera-tessera', 'conformance', 'vectors');
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -42,12 +44,13 @@ interface VaultVector {
   envelopeHex: string;
 }
 
+// The canonical vector files carry a versioned header object; the vectors live under `.vectors`.
 const biVectors: BlindIndexVector[] = JSON.parse(
   readFileSync(join(VECTORS_DIR, 'blind-index.json'), 'utf8'),
-);
+).vectors;
 const vaultVectors: VaultVector[] = JSON.parse(
   readFileSync(join(VECTORS_DIR, 'vault.json'), 'utf8'),
-);
+).vectors;
 
 // ── Blind-index: byte-exact cross-language parity ────────────────────────────
 

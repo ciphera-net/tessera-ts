@@ -20,6 +20,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { init } from '../src/wasm';
 import { blindIndexString } from '../src/blindIndex';
 import { importVaultKey, open } from '../src/vault';
+import { unwrapVmkRaw, type UnlockMethod } from '../src/vmk';
+import { MalformedEnvelopeError, UnsupportedVersionError } from '../src/errors';
 
 const here = dirname(fileURLToPath(import.meta.url));
 // test/ → packages/tessera-ts → packages → tessera-ts → (sibling) ciphera-tessera/conformance/vectors.
@@ -44,12 +46,34 @@ interface VaultVector {
   envelopeHex: string;
 }
 
+interface NegativeVector {
+  name: string;
+  vaultKeyHex: string;
+  context: string;
+  envelopeHex: string;
+  expect: 'UnsupportedVersion' | 'Malformed';
+}
+
+interface VmkVector {
+  method: UnlockMethod;
+  methodSecretHex: string;
+  vmkHex: string;
+  wrapKekHex: string;
+  blobHex: string;
+}
+
 // The canonical vector files carry a versioned header object; the vectors live under `.vectors`.
 const biVectors: BlindIndexVector[] = JSON.parse(
   readFileSync(join(VECTORS_DIR, 'blind-index.json'), 'utf8'),
 ).vectors;
 const vaultVectors: VaultVector[] = JSON.parse(
   readFileSync(join(VECTORS_DIR, 'vault.json'), 'utf8'),
+).vectors;
+const negVectors: NegativeVector[] = JSON.parse(
+  readFileSync(join(VECTORS_DIR, 'vault-negative.json'), 'utf8'),
+).vectors;
+const vmkVectors: VmkVector[] = JSON.parse(
+  readFileSync(join(VECTORS_DIR, 'vmk-wrap.json'), 'utf8'),
 ).vectors;
 
 // ── Blind-index: byte-exact cross-language parity ────────────────────────────
@@ -86,5 +110,32 @@ describe('vault parity vectors (TS opens Go-sealed envelopes)', () => {
       },
       10_000,
     );
+  }
+});
+
+// ── Vault: negative / rejection vectors (TS rejects with the right error class) ──────────────────
+// NOTE on intermediate KATs: TS does NOT byte-check the vault `kekHex`, the VMK `wrapKekHex`, or the
+// `normalizedEmail` KATs — the KEK/wrapKEK are NON-extractable WebCrypto keys and normalization runs
+// inside the WASM core, so their bytes are not observable here. TS verifies them TRANSITIVELY: the
+// vault/VMK KEKs via Open-parity (below + above), normalization via the blind-index case/whitespace
+// variant collapse (above). The `kekHex`/`wrapKekHex` fields exist for ports that CAN expose those values.
+
+describe('vault negative vectors (TS rejects with the right error class)', () => {
+  for (const n of negVectors) {
+    it(`rejects ${n.name} → ${n.expect}`, async () => {
+      const vaultKey = await importVaultKey(fromHex(n.vaultKeyHex));
+      const expected = n.expect === 'UnsupportedVersion' ? UnsupportedVersionError : MalformedEnvelopeError;
+      await expect(open(vaultKey, n.context, fromHex(n.envelopeHex))).rejects.toBeInstanceOf(expected);
+    });
+  }
+});
+
+// ── VMK-wrap: browser-only Open-parity (TS unwraps to the exact VMK) ──────────────────────────────
+describe('VMK-wrap parity vectors (TS unwraps to the exact VMK)', () => {
+  for (const v of vmkVectors) {
+    it(`unwraps method=${v.method}`, async () => {
+      const raw = await unwrapVmkRaw(fromHex(v.blobHex), fromHex(v.methodSecretHex), v.method);
+      expect(Buffer.from(raw).toString('hex')).toBe(v.vmkHex);
+    });
   }
 });

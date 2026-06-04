@@ -11,7 +11,10 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "wasm"],
+  "files": [
+    "dist",
+    "wasm"
+  ],
   "scripts": {
     "build:wasm": "bash scripts/build-wasm.sh",
     "test": "vitest run",
@@ -22,6 +25,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   }

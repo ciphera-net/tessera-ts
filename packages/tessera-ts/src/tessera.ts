@@ -30,6 +30,11 @@ export interface RecoverySession extends Session {
    *  export_key — the vault content is never re-encrypted). Single-use: the recovery secret is zeroed
    *  after, so a second call will fail. */
   resetPassword(newPassword: Uint8Array): Promise<void>;
+  /** Zero the in-memory recovery secret when finished WITHOUT calling resetPassword. The recovery
+   *  secret is retained in this session because the non-extractable VMK cannot itself be re-wrapped, so
+   *  resetPassword needs it; if you do not call resetPassword, call dispose() to wipe it. After dispose()
+   *  (or resetPassword) the secret is zeroed, and a subsequent resetPassword would fail. */
+  dispose(): void;
 }
 
 function sessionFor(vmk: VaultKey, sessionKeyB64: string | null): Session {
@@ -93,7 +98,9 @@ export class Tessera {
    *  session key) plus a single-use `resetPassword`. The recovery secret + wrap blob are held in the
    *  returned closure ONLY because the session VMK is non-extractable and cannot itself be re-wrapped;
    *  resetPassword re-derives the raw VMK from the recovery wrap and re-wraps it under the new password,
-   *  so the vault is never re-encrypted. The recovery secret is zeroed once resetPassword runs. */
+   *  so the vault is never re-encrypted. The recovery secret is zeroed once resetPassword runs — or, if
+   *  the caller never calls resetPassword, once dispose() is called. If NEITHER is called, the 32-byte
+   *  recovery secret persists in this session for its lifetime; discard the session promptly. */
   async recoverWithPhrase({
     email,
     phrase,
@@ -123,6 +130,11 @@ export class Tessera {
           exportKey.fill(0);
           recovSecret.fill(0);
         }
+      },
+      dispose(): void {
+        // Zero the recovery secret when finished WITHOUT re-keying. Idempotent with the resetPassword
+        // wipe; after this, resetPassword would fail (a zeroed secret cannot unwrap the recovery blob).
+        recovSecret.fill(0);
       },
     };
   }

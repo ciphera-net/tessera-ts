@@ -335,7 +335,7 @@ AAD = [0x01] ‖ utf8(context)
 ### What the SDK does
 
 - The vault master key (VMK) is held as a **non-extractable `CryptoKey`** inside the `Session` object. `extractable: false` prevents `crypto.subtle.exportKey` from returning the raw bytes.
-- The OPAQUE `export_key` (64 bytes) and the recovery entropy (32 bytes) transit WASM/JS linear memory transiently during unlock. They are zeroed in `finally` blocks immediately after the VMK is wrapped or unwrapped and do not persist across calls. They never cross the network.
+- The OPAQUE `export_key` (64 bytes) and the recovery entropy (32 bytes) transit WASM/JS linear memory transiently during unlock. On the register / login / passkey paths they are zeroed in `finally` blocks immediately after the VMK is wrapped or unwrapped. **Exception:** `recoverWithPhrase` retains the 32-byte recovery secret inside the returned `RecoverySession` — the non-extractable VMK cannot itself be re-wrapped, so `resetPassword` needs it. That secret is zeroed by `resetPassword` **or** by `RecoverySession.dispose()`; if you call neither, it persists for the session's lifetime (discard the session promptly). None of these values ever cross the network.
 - VMK-wrap blobs stored server-side are opaque byte sequences. The server holds no plaintext passwords and no vault keys.
 
 ### What the SDK cannot guarantee

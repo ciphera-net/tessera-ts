@@ -10,7 +10,7 @@
 // supported path, and the same KEK works both directions.
 import { utf8, wcView } from './encoding';
 import { importVaultKey, type VaultKey } from './vault';
-import { MalformedEnvelopeError } from './errors';
+import { MalformedEnvelopeError, UnsupportedVersionError } from './errors';
 
 const subtle = globalThis.crypto.subtle;
 const VERSION = 0x01;
@@ -74,7 +74,10 @@ export async function unwrapVmkRaw(
   methodSecret: Uint8Array,
   method: UnlockMethod,
 ): Promise<Uint8Array> {
-  if (blob.length !== ENVELOPE_LEN || blob[0] !== VERSION) throw new MalformedEnvelopeError();
+  if (blob.length !== ENVELOPE_LEN) throw new MalformedEnvelopeError();
+  // Unknown version is a DISTINCT, non-secret rejection (forward-compat) — matches vault.open rather
+  // than collapsing into MalformedEnvelopeError. The version byte carries no secret, so this is no oracle.
+  if (blob[0] !== VERSION) throw new UnsupportedVersionError();
   const nonce = blob.subarray(1, 1 + NONCE_LEN);
   const ct = blob.subarray(1 + NONCE_LEN);
   try {

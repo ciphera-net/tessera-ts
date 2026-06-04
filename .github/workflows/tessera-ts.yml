@@ -113,7 +113,9 @@ jobs:
           workspaces: tessera-ts -> tessera-ts/target
 
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        # Pinned + checksummed (crates.io) install — NOT an unverified curl|sh of whatever the installer
+        # endpoint currently serves. --locked builds with wasm-pack's own committed Cargo.lock.
+        run: cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Setup Node 24
         uses: actions/setup-node@v4
@@ -186,7 +188,9 @@ jobs:
           workspaces: tessera-ts -> tessera-ts/target
 
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        # Pinned + checksummed (crates.io) install — NOT an unverified curl|sh of whatever the installer
+        # endpoint currently serves. --locked builds with wasm-pack's own committed Cargo.lock.
+        run: cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Setup Node 24
         uses: actions/setup-node@v4
@@ -263,7 +267,9 @@ jobs:
           workspaces: tessera-ts -> tessera-ts/target
 
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        # Pinned + checksummed (crates.io) install — NOT an unverified curl|sh of whatever the installer
+        # endpoint currently serves. --locked builds with wasm-pack's own committed Cargo.lock.
+        run: cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Setup Node 24
         uses: actions/setup-node@v4

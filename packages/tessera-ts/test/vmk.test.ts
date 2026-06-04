@@ -6,7 +6,7 @@ import {
   rewrapForMethod,
 } from '../src/vmk';
 import { seal, open } from '../src/vault';
-import { MalformedEnvelopeError } from '../src/errors';
+import { MalformedEnvelopeError, UnsupportedVersionError } from '../src/errors';
 
 const subtle = globalThis.crypto.subtle;
 const rand = (n: number) => crypto.getRandomValues(new Uint8Array(n));
@@ -78,5 +78,12 @@ describe('vmk wrap/unwrap per unlock method', () => {
     await expect(unwrapVmkRaw(new Uint8Array(62), secret, 'opaque')).rejects.toBeInstanceOf(
       MalformedEnvelopeError,
     );
+  });
+
+  it('an unknown version byte (correct length) throws UnsupportedVersion, not Malformed', async () => {
+    const secret = rand(32);
+    const blob = new Uint8Array(61); // correct ENVELOPE_LEN, but an unknown version byte
+    blob[0] = 0x02;
+    await expect(unwrapVmkRaw(blob, secret, 'opaque')).rejects.toBeInstanceOf(UnsupportedVersionError);
   });
 });

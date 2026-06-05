@@ -8,9 +8,9 @@
 //   AAD     = [0x01] ‖ utf8("tessera/vmk-wrap/v1/"+method)  (binds version + method into the GCM tag)
 // Wrap/unwrap is plain AES-GCM encrypt/decrypt (NOT WebCrypto wrapKey/unwrapKey): one universally
 // supported path, and the same KEK works both directions.
-import { utf8, wcView } from './encoding';
-import { importVaultKey, type VaultKey } from './vault';
-import { MalformedEnvelopeError, UnsupportedVersionError } from './errors';
+import { utf8, wcView } from './encoding.js';
+import { importVaultKey, type VaultKey } from './vault.js';
+import { MalformedEnvelopeError, UnsupportedVersionError } from './errors.js';
 
 const subtle = globalThis.crypto.subtle;
 const VERSION = 0x01;

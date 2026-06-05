@@ -2,13 +2,13 @@
 // Envelope v1: [0x01][nonceW 12][AES-256-GCM(KEK, DEK)=48][nonceC 12][AES-256-GCM(DEK, msg)].
 //   KEK = HKDF-SHA256(IKM=vaultKey, salt=32 zero bytes, info="tessera/vault/v1/record/"+context, L=32)
 //   DEK = random 32 bytes;  AAD = [0x01] ‖ utf8(context) on BOTH GCM ops;  context REQUIRED, NOT stored.
-import { utf8, wcView } from './encoding';
+import { utf8, wcView } from './encoding.js';
 import {
   EmptyContextError,
   EmptyVaultKeyError,
   MalformedEnvelopeError,
   UnsupportedVersionError,
-} from './errors';
+} from './errors.js';
 
 const VERSION = 0x01;
 const NONCE_LEN = 12;

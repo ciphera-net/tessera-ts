@@ -3,9 +3,9 @@
 // transport carries blobs to the app's backend (→ tessera-go → sidecar). The 64-byte export_key is
 // CLIENT-ONLY — the caller (tessera.ts) wraps the VMK under it immediately and then zeroes it. The
 // WASM Finish handles are freed once their bytes are consumed (zeroizes the in-WASM key copies).
-import { fromBase64Std, toBase64Std } from './encoding';
-import { createRegistrationHandle, createLoginHandle } from './wasm';
-import type { Transport } from './transport';
+import { fromBase64Std, toBase64Std } from './encoding.js';
+import { createRegistrationHandle, createLoginHandle } from './wasm.js';
+import type { Transport } from './transport.js';
 
 /** Drive OPAQUE registration. Returns the 64-byte export_key (CLIENT-ONLY). The server stores the
  *  password file (void). */

@@ -2,14 +2,14 @@
 // 64-byte OPAQUE export_key and the 32-byte recovery entropy are used ONLY to wrap the VMK, then zeroed
 // — they never persist and never cross the wire. The VMK is held as a non-extractable CryptoKey inside
 // the returned Session; the raw VMK never leaves WASM/JS linear memory at rest.
-import { blindIndexString } from './blindIndex';
-import { loginOpaque, registerOpaque, resetPasswordOpaque } from './opaque';
-import { generateAndWrap, openVaultKey, rewrapForMethod } from './vmk';
-import { newRecoveryPhrase, recoverySecret } from './recovery';
-import type { PrfProvider } from './passkey';
-import { open as vaultOpen, seal as vaultSeal, type VaultKey } from './vault';
-import { fromBase64Std, toBase64Std } from './encoding';
-import type { Transport } from './transport';
+import { blindIndexString } from './blindIndex.js';
+import { loginOpaque, registerOpaque, resetPasswordOpaque } from './opaque.js';
+import { generateAndWrap, openVaultKey, rewrapForMethod } from './vmk.js';
+import { newRecoveryPhrase, recoverySecret } from './recovery.js';
+import type { PrfProvider } from './passkey.js';
+import { open as vaultOpen, seal as vaultSeal, type VaultKey } from './vault.js';
+import { fromBase64Std, toBase64Std } from './encoding.js';
+import type { Transport } from './transport.js';
 
 // VMK-wrap blobs are stored as standard base64 (they are opaque server storage, not OPAQUE wire blobs).
 const b64 = toBase64Std;

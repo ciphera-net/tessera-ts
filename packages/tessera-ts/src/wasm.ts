@@ -8,7 +8,7 @@
 //
 // Types are imported from the generated `web` declarations (identical class surface to `node`), so
 // the WASM package must be built (scripts/build-wasm.sh) before typecheck/test — enforced by CI order.
-import type { RegistrationHandle, LoginHandle } from '../wasm/web/tessera';
+import type { RegistrationHandle, LoginHandle } from '../wasm/web/tessera.js';
 
 export type { RegistrationHandle, LoginHandle };
 

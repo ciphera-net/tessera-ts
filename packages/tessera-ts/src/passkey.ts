@@ -7,7 +7,7 @@
 // CALLER runs the ceremony (typically via `evaluatePrf` below) and hands back the 32-byte PRF output;
 // the SDK wraps/unwraps the VMK under it. The PRF eval salt is the ONE ceremony input the SDK pins
 // (it must match between enable and unlock or the derived secret differs).
-import { wcView } from './encoding';
+import { wcView } from './encoding.js';
 
 /** Fixed PRF eval input — pinned so the PRF output is stable across enable/unlock. */
 const PRF_SALT = new TextEncoder().encode('tessera/prf/v1');

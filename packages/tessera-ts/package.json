@@ -1,6 +1,6 @@
 {
   "name": "@ciphera-net/tessera",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
   "license": "Apache-2.0",
@@ -22,6 +22,7 @@
     "build:wasm": "bash scripts/build-wasm.sh",
     "build:ts": "tsc",
     "build": "npm run build:wasm && npm run build:ts",
+    "prepack": "rm -f wasm/web/.gitignore wasm/node/.gitignore",
     "test": "vitest run",
     "test:browser": "playwright test"
   },

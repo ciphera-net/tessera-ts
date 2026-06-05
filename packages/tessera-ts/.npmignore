@@ -1,0 +1,17 @@
+# Explicit publish control so npm does NOT fall back to the repo .gitignore.
+# The package.json "files" allowlist (dist + wasm) governs what ships; the lines
+# below keep dev-only trees out. NOTE: the real cause of a missing wasm/ in the
+# tarball is the `*` .gitignore that wasm-pack writes inside wasm/web + wasm/node
+# — stripped by the package.json "prepack" script before every pack/publish.
+src
+test
+harness
+scripts
+node_modules
+browser
+*.tsbuildinfo
+tsconfig*.json
+vitest.config.ts
+playwright.config.ts
+playwright-report
+test-results

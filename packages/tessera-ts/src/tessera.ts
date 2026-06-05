@@ -186,6 +186,40 @@ export class Tessera {
       prfOutput.fill(0);
     }
   }
+
+  /** Change the password from a logged-in context. Re-authenticates with the OLD
+   *  password, runs a fresh OPAQUE registration under the NEW password, and re-wraps
+   *  the SAME VMK from the 'opaque' wrap into a new 'opaque' wrap under the new
+   *  export_key. The vault is NEVER re-encrypted, and the recovery + passkey wraps
+   *  (which wrap the same VMK) stay valid. Both export_keys are zeroed after use. */
+  async changePassword({
+    email,
+    oldPassword,
+    newPassword,
+  }: {
+    email: string;
+    oldPassword: Uint8Array;
+    newPassword: Uint8Array;
+  }): Promise<void> {
+    const credentialId = blindIndexString(email);
+    const { exportKey: oldExport } = await loginOpaque(this.transport, credentialId, oldPassword); // re-auth
+    try {
+      const opaqueWrap = await this.transport.getWrap({ credentialId, method: 'opaque' });
+      if (!opaqueWrap) throw new Error('tessera: no opaque wrap for this account');
+      const { exportKey: newExport } = await resetPasswordOpaque(this.transport, credentialId, newPassword);
+      try {
+        const newOpaqueWrap = await rewrapForMethod(
+          { blob: fromB64(opaqueWrap.blobB64), secret: oldExport, method: 'opaque' },
+          { secret: newExport, method: 'opaque' },
+        );
+        await this.transport.putWraps({ credentialId, wraps: { opaque: b64(newOpaqueWrap) } });
+      } finally {
+        newExport.fill(0);
+      }
+    } finally {
+      oldExport.fill(0);
+    }
+  }
 }
 
 /** @internal Exposed for the recovery/passkey methods added in later tasks (not re-exported from index). */

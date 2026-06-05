@@ -58,7 +58,7 @@ export class Tessera {
   }: {
     email: string;
     password: Uint8Array;
-  }): Promise<{ recoveryPhrase: string }> {
+  }): Promise<{ recoveryPhrase: string; session: Session }> {
     const credentialId = blindIndexString(email);
     const { exportKey } = await registerOpaque(this.transport, credentialId, password);
     // Open the try IMMEDIATELY so exportKey is zeroed on ANY subsequent throw. recovEntropy is
@@ -68,12 +68,12 @@ export class Tessera {
       const recoveryPhrase = newRecoveryPhrase();
       recovEntropy = recoverySecret(recoveryPhrase);
       // The WHOLE 64-byte export_key is the 'opaque' wrap secret — do NOT slice it.
-      const { wraps } = await generateAndWrap({ opaque: exportKey, recovery: recovEntropy });
+      const { vmk, wraps } = await generateAndWrap({ opaque: exportKey, recovery: recovEntropy });
       await this.transport.putWraps({
         credentialId,
         wraps: { opaque: b64(wraps.opaque!), recovery: b64(wraps.recovery!) },
       });
-      return { recoveryPhrase };
+      return { recoveryPhrase, session: sessionFor(vmk, null) };
     } finally {
       exportKey.fill(0);
       recovEntropy?.fill(0);

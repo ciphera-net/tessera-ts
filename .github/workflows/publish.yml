@@ -1,0 +1,75 @@
+name: publish
+
+# Publishes @ciphera-net/tessera to GitHub Packages on a version tag (v*).
+# Builds the WASM (web + node) from the private ciphera-tessera sibling and the
+# TS dist/, then `npm publish`. The wasm-build steps mirror tessera-ts.yml exactly.
+#
+# OWNER PREREQUISITES (same model as tessera-ts.yml):
+#   • secret CI_REPO_TOKEN — read on ciphera-net/tessera (for the wasm path-dep).
+#   • GITHUB_TOKEN with packages:write (granted below) authenticates the publish
+#     to npm.pkg.github.com. The package scope @ciphera-net matches the org.
+#   • Bump packages/tessera-ts/package.json "version" and push a matching tag,
+#     e.g. `git tag v0.1.0 && git push origin v0.1.0`.
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout tessera-ts
+        uses: actions/checkout@v4
+        with:
+          path: tessera-ts
+
+      - name: Checkout ciphera-tessera (private)
+        uses: actions/checkout@v4
+        with:
+          repository: ciphera-net/tessera
+          path: ciphera-tessera
+          token: ${{ secrets.CI_REPO_TOKEN }}
+
+      - name: Install Rust stable + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tessera-ts -> tessera-ts/target
+
+      - name: Install wasm-pack
+        # Pinned + checksummed (crates.io) install — matches tessera-ts.yml.
+        run: cargo install wasm-pack --version 0.15.0 --locked
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://npm.pkg.github.com'
+          cache: npm
+          cache-dependency-path: tessera-ts/packages/tessera-ts/package-lock.json
+
+      - name: Build WASM (web + node targets)
+        working-directory: tessera-ts
+        run: bash packages/tessera-ts/scripts/build-wasm.sh
+
+      - name: npm ci
+        working-directory: tessera-ts/packages/tessera-ts
+        run: npm ci
+
+      - name: Build TypeScript (dist)
+        working-directory: tessera-ts/packages/tessera-ts
+        run: npm run build:ts
+
+      - name: Publish to GitHub Packages
+        working-directory: tessera-ts/packages/tessera-ts
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

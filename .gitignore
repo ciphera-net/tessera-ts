@@ -1,6 +1,7 @@
 /target
 node_modules
 packages/*/wasm/
+packages/*/dist/
 
 # Playwright
 test-results

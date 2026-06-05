@@ -220,6 +220,38 @@ export class Tessera {
       oldExport.fill(0);
     }
   }
+
+  /** Rotate the recovery phrase from a logged-in context. Re-authenticates with the
+   *  password, mints a fresh 24-word phrase, and re-wraps the SAME VMK from the
+   *  'opaque' wrap into a new 'recovery' wrap under the new phrase's secret. The vault
+   *  is never re-encrypted, and the OLD phrase's wrap is overwritten. Returns the new
+   *  phrase to show ONCE. export_key and recovery entropy are zeroed after use. */
+  async regenerateRecovery({
+    email,
+    password,
+  }: {
+    email: string;
+    password: Uint8Array;
+  }): Promise<{ recoveryPhrase: string }> {
+    const credentialId = blindIndexString(email);
+    const { exportKey } = await loginOpaque(this.transport, credentialId, password);
+    let recovEntropy: Uint8Array | undefined;
+    try {
+      const opaqueWrap = await this.transport.getWrap({ credentialId, method: 'opaque' });
+      if (!opaqueWrap) throw new Error('tessera: no opaque wrap for this account');
+      const recoveryPhrase = newRecoveryPhrase();
+      recovEntropy = recoverySecret(recoveryPhrase);
+      const newRecoveryWrap = await rewrapForMethod(
+        { blob: fromB64(opaqueWrap.blobB64), secret: exportKey, method: 'opaque' },
+        { secret: recovEntropy, method: 'recovery' },
+      );
+      await this.transport.putWraps({ credentialId, wraps: { recovery: b64(newRecoveryWrap) } });
+      return { recoveryPhrase };
+    } finally {
+      exportKey.fill(0);
+      recovEntropy?.fill(0);
+    }
+  }
 }
 
 /** @internal Exposed for the recovery/passkey methods added in later tasks (not re-exported from index). */

@@ -80,6 +80,45 @@ export class Tessera {
     }
   }
 
+  /** Migration-only enrolment for an existing SRP account. Same crypto as register(), with two
+   *  deliberate differences that make a forced SRP→OPAQUE upgrade safe:
+   *   (1) VERIFY-BEFORE-ZERO — it PROVES both the opaque and recovery wraps round-trip while export_key
+   *       and the recovery entropy are STILL LIVE. register() zeroes those secrets in its finally before
+   *       returning, which makes any post-hoc wrap verification impossible; here the openVaultKey checks
+   *       run inside the try, so a bad wrap throws (AES-GCM tag failure) and NOTHING is returned.
+   *   (2) NO putWraps — the caller submits the wraps itself, atomically, to /auth/migrate/opaque (so the
+   *       auth_version flip and the wrap writes commit in one DB transaction). The wraps are returned as
+   *       base64 for that POST. */
+  async registerForMigration({
+    email,
+    password,
+  }: {
+    email: string;
+    password: Uint8Array;
+  }): Promise<{ recoveryPhrase: string; session: Session; wraps: { opaque: string; recovery: string } }> {
+    const credentialId = blindIndexString(email);
+    const { exportKey } = await registerOpaque(this.transport, credentialId, password);
+    let recovEntropy: Uint8Array | undefined;
+    try {
+      const recoveryPhrase = newRecoveryPhrase();
+      recovEntropy = recoverySecret(recoveryPhrase);
+      // The WHOLE 64-byte export_key is the 'opaque' wrap secret — do NOT slice it.
+      const { vmk, wraps } = await generateAndWrap({ opaque: exportKey, recovery: recovEntropy });
+      // RECOVERABILITY PROOF — both wraps must decrypt to the real VMK BEFORE the finally zeroes the
+      // secrets. A garbled/empty wrap makes openVaultKey throw, aborting the migration with no writes.
+      await openVaultKey(wraps.opaque!, exportKey, 'opaque');
+      await openVaultKey(wraps.recovery!, recovEntropy, 'recovery');
+      return {
+        recoveryPhrase,
+        session: sessionFor(vmk, null),
+        wraps: { opaque: b64(wraps.opaque!), recovery: b64(wraps.recovery!) },
+      };
+    } finally {
+      exportKey.fill(0);
+      recovEntropy?.fill(0);
+    }
+  }
+
   /** Login: OPAQUE → export_key → unwrap the VMK (non-extractable) → Session with vault ops. */
   async login({ email, password }: { email: string; password: Uint8Array }): Promise<Session> {
     const credentialId = blindIndexString(email);

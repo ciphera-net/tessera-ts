@@ -6,7 +6,8 @@
   "license": "Apache-2.0",
   "description": "Tessera browser SDK — OPAQUE auth, blind index, vault, BIP-39 recovery, WebAuthn-PRF (WASM + WebCrypto).",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "exports": {
     ".": {

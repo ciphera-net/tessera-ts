@@ -2,7 +2,9 @@
 
 Browser SDK for the Tessera authentication and vault system.
 
-> **Status: PRIVATE — do not distribute until external audit is complete.**
+> **Self-reviewed, not independently audited.** Apache-2.0. Read the
+> [security model](https://github.com/ciphera-net/tessera/blob/main/docs/THREAT-MODEL.md) and
+> [self-audit](https://github.com/ciphera-net/tessera/blob/main/docs/SELF-AUDIT.md) before relying on it.
 
 ---
 
@@ -10,7 +12,7 @@ Browser SDK for the Tessera authentication and vault system.
 
 `@ciphera-net/tessera` is a browser-first TypeScript SDK that implements:
 
-- **OPAQUE (RFC 9807) password authentication** — the password never reaches the server; only the SRP-style verifier (OPAQUE password file) is stored there. The `export_key` produced by the OPAQUE handshake is used exclusively to wrap the vault master key (VMK), then zeroed.
+- **OPAQUE (RFC 9807) password authentication** — the password never reaches the server in any form; the server stores only an opaque OPAQUE registration record (password file) that cannot be reversed into the password. The `export_key` produced by the OPAQUE handshake is used exclusively to wrap the vault master key (VMK), then zeroed.
 - **Argon2id blind index** — a deterministic, pseudonymous lookup key derived from the email address (Argon2id/v0x13/m=64 MiB/t=3/p=1, domain-separated salt). Used as the server-side `credentialId`; the plaintext email never hits the database.
 - **AES-256-GCM vault** — a two-layer envelope (wrapped DEK under a per-context KEK). Context is required on every seal/open call and is bound into the key derivation and AAD; it is never stored in the envelope.
 - **BIP-39 (24-word / 256-bit) recovery phrase** — the mnemonic entropy is used directly as the VMK-wrap secret (no PBKDF2 indirection). Shown to the user once at registration.
@@ -26,7 +28,7 @@ The SDK is byte-for-byte interoperable with **tessera-go** (the Go server SDK) a
 npm i @ciphera-net/tessera
 ```
 
-> The package is currently `"private": true`. It is not published to npm. Install from the monorepo or a local path until the audit clears.
+> Published to npm as [`@ciphera-net/tessera`](https://www.npmjs.com/package/@ciphera-net/tessera) (public, no auth required).
 
 **Peer requirement:** the SDK is transport-agnostic. Your application must supply a `Transport` implementation that relays OPAQUE blobs and VMK-wrap storage to your backend (which fronts tessera-go → the Rust sidecar). See [Transport](#transport) below.
 

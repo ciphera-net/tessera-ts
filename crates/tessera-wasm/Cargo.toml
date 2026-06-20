@@ -7,12 +7,11 @@ license = "Apache-2.0"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-# Cross-repo build dep on the core crate. LOCAL dev: relative path to the sibling clone (the gate in
-# Task 6 runs against local core, no push needed). CI / post-gate: replace with a PINNED git dep
-# `ciphera-tessera = { git = "https://github.com/ciphera-net/tessera", rev = "<sha>" }` (Task 17 checks
-# out the private core via the shared PAT). Keep the rev pinned — never float on a branch.
+# Cross-repo build dep on the public core crate, pinned to an exact commit (never float on a branch).
+# For local development against a sibling checkout, temporarily switch to:
+#   ciphera-tessera = { path = "../../../ciphera-tessera" }
 [dependencies]
-ciphera-tessera = { path = "../../../ciphera-tessera" }
+ciphera-tessera = { git = "https://github.com/ciphera-net/tessera", rev = "daedfa8f8b2e89bda02966be8618623f710b8d6b" }
 wasm-bindgen = "0.2"
 zeroize = "1"
 # getrandom's `js` feature wires OsRng → crypto.getRandomValues on wasm32-unknown-unknown. opaque-ke

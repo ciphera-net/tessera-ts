@@ -6,3 +6,13 @@ packages/*/dist/
 # Playwright
 test-results
 playwright-report
+
+# Secrets / key material — never commit (OPAQUE ServerSetup is operator-provided)
+*.bin
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+.env.*
+server-setup*

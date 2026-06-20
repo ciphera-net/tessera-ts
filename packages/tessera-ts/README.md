@@ -2,7 +2,7 @@
 
 Browser SDK for the Tessera authentication and vault system.
 
-> **Self-reviewed, not independently audited.** Apache-2.0. Read the
+> Self-reviewed; not yet independently audited. Apache-2.0. Read the
 > [security model](https://github.com/ciphera-net/tessera/blob/main/docs/THREAT-MODEL.md) and
 > [self-audit](https://github.com/ciphera-net/tessera/blob/main/docs/SELF-AUDIT.md) before relying on it.
 

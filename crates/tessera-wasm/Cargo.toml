@@ -7,11 +7,11 @@ license = "Apache-2.0"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-# Cross-repo build dep on the public core crate, pinned to an exact commit (never float on a branch).
+# Core crate from crates.io (https://crates.io/crates/ciphera-tessera).
 # For local development against a sibling checkout, temporarily switch to:
 #   ciphera-tessera = { path = "../../../ciphera-tessera" }
 [dependencies]
-ciphera-tessera = { git = "https://github.com/ciphera-net/tessera", rev = "daedfa8f8b2e89bda02966be8618623f710b8d6b" }
+ciphera-tessera = "=0.0.1"
 wasm-bindgen = "=0.2.122"
 zeroize = "=1.8.2"
 # getrandom's `js` feature wires OsRng → crypto.getRandomValues on wasm32-unknown-unknown. opaque-ke

@@ -98,7 +98,8 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 [[package]]
 name = "ciphera-tessera"
 version = "0.0.1"
-source = "git+https://github.com/ciphera-net/tessera?rev=daedfa8f8b2e89bda02966be8618623f710b8d6b#daedfa8f8b2e89bda02966be8618623f710b8d6b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "739094c936e8d2fb57f9fbc9f0de30abfbf072d41af1488c1ddd3ad6e7e13555"
 dependencies = [
  "base64",
  "opaque-ke",

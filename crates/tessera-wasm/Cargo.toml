@@ -12,8 +12,8 @@ crate-type = ["cdylib", "rlib"]
 #   ciphera-tessera = { path = "../../../ciphera-tessera" }
 [dependencies]
 ciphera-tessera = { git = "https://github.com/ciphera-net/tessera", rev = "daedfa8f8b2e89bda02966be8618623f710b8d6b" }
-wasm-bindgen = "0.2"
-zeroize = "1"
+wasm-bindgen = "=0.2.122"
+zeroize = "=1.8.2"
 # getrandom's `js` feature wires OsRng → crypto.getRandomValues on wasm32-unknown-unknown. opaque-ke
 # 4.x → rand 0.8 → rand_core 0.6 → getrandom 0.2. A DIRECT `getrandom` dep with `js` here is the
 # canonical, sufficient activation (Cargo unifies it onto the transitive getrandom used by rand_core
@@ -24,7 +24,7 @@ zeroize = "1"
 # backend behind its OWN `cfg(target_arch = "wasm32")`, so native builds ignore the feature and use
 # the OS RNG. (Seeing `js-sys` under `cargo tree` on a native target is from the wasm-bindgen-test
 # dev-dep, not this line.)
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "=0.2.17", features = ["js"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

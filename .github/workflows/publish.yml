@@ -1,11 +1,11 @@
 name: publish
 
 # Publishes @ciphera-net/tessera to GitHub Packages on a version tag (v*).
-# Builds the WASM (web + node) from the private ciphera-tessera sibling and the
+# Builds the WASM (web + node) from the public ciphera-tessera sibling and the
 # TS dist/, then `npm publish`. The wasm-build steps mirror tessera-ts.yml exactly.
 #
 # OWNER PREREQUISITES (same model as tessera-ts.yml):
-#   • secret CI_REPO_TOKEN — read on ciphera-net/tessera (for the wasm path-dep).
+#   • ciphera-net/tessera is PUBLIC — no CI_REPO_TOKEN needed for checkout.
 #   • GITHUB_TOKEN with packages:write (granted below) authenticates the publish
 #     to npm.pkg.github.com. The package scope @ciphera-net matches the org.
 #   • Bump packages/tessera-ts/package.json "version" and push a matching tag,
@@ -23,24 +23,23 @@ jobs:
       packages: write
     steps:
       - name: Checkout tessera-ts
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           path: tessera-ts
 
-      - name: Checkout ciphera-tessera (private)
-        uses: actions/checkout@v4
+      - name: Checkout ciphera-tessera (public)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: ciphera-net/tessera
           path: ciphera-tessera
-          token: ${{ secrets.CI_REPO_TOKEN }}
 
       - name: Install Rust stable + wasm32 target
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: wasm32-unknown-unknown
 
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: tessera-ts -> tessera-ts/target
 
@@ -49,7 +48,7 @@ jobs:
         run: cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Setup Node 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           registry-url: 'https://npm.pkg.github.com'
@@ -63,6 +62,10 @@ jobs:
       - name: npm ci
         working-directory: tessera-ts/packages/tessera-ts
         run: npm ci
+
+      - name: npm audit (production deps)
+        working-directory: tessera-ts/packages/tessera-ts
+        run: npm audit --omit=dev
 
       - name: Build TypeScript (dist)
         working-directory: tessera-ts/packages/tessera-ts

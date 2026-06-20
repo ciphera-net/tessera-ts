@@ -13,8 +13,8 @@ on:
 #
 #   $GITHUB_WORKSPACE/
 #     tessera-ts/          ← this repo
-#     ciphera-tessera/     ← ciphera-net/tessera (private Rust core)
-#     tessera-go/          ← ciphera-net/tessera-go (private Go SDK)
+#     ciphera-tessera/     ← ciphera-net/tessera (public Rust core)
+#     tessera-go/          ← ciphera-net/tessera-go (public Go SDK)
 #
 # Path arithmetic:
 #   tessera-ts/crates/tessera-wasm/Cargo.toml
@@ -27,10 +27,8 @@ on:
 #   (Cross-language test VECTORS now live in ciphera-tessera/conformance/vectors; the Go generator
 #    moved to tessera-go/harness/vectors — neither is under tessera-ts/harness anymore.)
 #
-# OWNER PREREQUISITE: the secret CI_REPO_TOKEN must be provisioned on the
-# tessera-ts repo (Settings → Secrets → Actions). It must be a PAT (classic)
-# or a fine-grained token with "Contents: read" on both ciphera-net/tessera
-# and ciphera-net/tessera-go. Mirror the same token already used in tessera-go/ci.yml.
+# Both ciphera-net/tessera and ciphera-net/tessera-go are PUBLIC repos — no
+# token is required for checkout. GITHUB_TOKEN implicit read access is sufficient.
 # ---------------------------------------------------------------------------
 
 jobs:
@@ -43,20 +41,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout tessera-ts
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           path: tessera-ts
 
-      # Private Rust core needed for the path dep in Cargo.toml
-      - name: Checkout ciphera-tessera (private)
-        uses: actions/checkout@v4
+      # Public Rust core needed for the path dep in Cargo.toml
+      - name: Checkout ciphera-tessera (public)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: ciphera-net/tessera
           path: ciphera-tessera
-          token: ${{ secrets.CI_REPO_TOKEN }}
 
       - name: Install Rust stable + wasm32 target
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: wasm32-unknown-unknown
           components: rustfmt, clippy
@@ -64,7 +61,7 @@ jobs:
       # Cache: scope the cache to the workspace member that actually has a
       # Cargo.lock (tessera-ts workspace root = tessera-ts/Cargo.toml).
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: tessera-ts
 
@@ -91,24 +88,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout tessera-ts
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           path: tessera-ts
 
-      - name: Checkout ciphera-tessera (private)
-        uses: actions/checkout@v4
+      - name: Checkout ciphera-tessera (public)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: ciphera-net/tessera
           path: ciphera-tessera
-          token: ${{ secrets.CI_REPO_TOKEN }}
 
       - name: Install Rust stable + wasm32 target
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: wasm32-unknown-unknown
 
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: tessera-ts -> tessera-ts/target
 
@@ -118,11 +114,11 @@ jobs:
         run: cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Setup Node 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
 
-      # Build the sidecar binary from the private Rust core.
+      # Build the sidecar binary from the public Rust core.
       # The binary path is $GITHUB_WORKSPACE/ciphera-tessera/target/release/tessera-sidecar
       - name: Build tessera-sidecar
         working-directory: ciphera-tessera
@@ -156,34 +152,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout tessera-ts
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           path: tessera-ts
 
-      - name: Checkout ciphera-tessera (private)
-        uses: actions/checkout@v4
+      - name: Checkout ciphera-tessera (public)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: ciphera-net/tessera
           path: ciphera-tessera
-          token: ${{ secrets.CI_REPO_TOKEN }}
 
       # tessera-go is required by the parity harness replace directives:
       #   harness/{vault,blindindex}-parity/go.mod:
       #     replace github.com/ciphera-net/tessera-go => ../../../tessera-go
-      - name: Checkout tessera-go (private)
-        uses: actions/checkout@v4
+      - name: Checkout tessera-go (public)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: ciphera-net/tessera-go
           path: tessera-go
-          token: ${{ secrets.CI_REPO_TOKEN }}
 
       - name: Install Rust stable + wasm32 target
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: wasm32-unknown-unknown
 
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: tessera-ts -> tessera-ts/target
 
@@ -193,14 +187,14 @@ jobs:
         run: cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Setup Node 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: tessera-ts/packages/tessera-ts/package-lock.json
 
       - name: Setup Go 1.25
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
           # go.mod files live under harness subdirs, not the workspace root;
@@ -219,6 +213,10 @@ jobs:
       - name: npm ci
         working-directory: tessera-ts/packages/tessera-ts
         run: npm ci
+
+      - name: npm audit (production deps)
+        working-directory: tessera-ts/packages/tessera-ts
+        run: npm audit --omit=dev
 
       # vitest covers:
       #   • packages/tessera-ts/src/**   (unit tests)
@@ -245,24 +243,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout tessera-ts
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           path: tessera-ts
 
-      - name: Checkout ciphera-tessera (private)
-        uses: actions/checkout@v4
+      - name: Checkout ciphera-tessera (public)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: ciphera-net/tessera
           path: ciphera-tessera
-          token: ${{ secrets.CI_REPO_TOKEN }}
 
       - name: Install Rust stable + wasm32 target
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: wasm32-unknown-unknown
 
       - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: tessera-ts -> tessera-ts/target
 
@@ -272,7 +269,7 @@ jobs:
         run: cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Setup Node 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24'
           cache: npm

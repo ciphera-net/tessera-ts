@@ -21,10 +21,16 @@ describe('recovery (BIP-39, 24 words)', () => {
   });
 
   it('throws when a single word is tampered', () => {
-    const phrase = newRecoveryPhrase();
-    const words = phrase.split(' ');
-    // Swap the first word for a different valid wordlist entry → checksum no longer matches.
-    words[0] = words[0] === 'zoo' ? 'zone' : 'zoo';
-    expect(() => recoverySecret(words.join(' '))).toThrow();
+    // Fixed BIP-39 test vector (Trezor, entropy 0x8080...80) with word 0 swapped
+    // letter→zoo. The 8-bit checksum only catches a random single-word tamper with
+    // probability 255/256, so tampering a *random* phrase is flaky by construction;
+    // this specific tampered vector is verified once to fail the checksum and is
+    // therefore deterministic forever.
+    const valid =
+      'letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd ' +
+      'amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic bless';
+    expect(recoverySecret(valid).length).toBe(32); // vector itself is valid
+    const tampered = valid.replace(/^letter/, 'zoo');
+    expect(() => recoverySecret(tampered)).toThrow();
   });
 });

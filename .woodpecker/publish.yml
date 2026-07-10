@@ -2,7 +2,7 @@
 # or via manual trigger. Builds the WASM (web + node) from the public ciphera-tessera sibling
 # and the TS dist/, then `npm publish`. The wasm-build steps mirror rust.yml/handshake.yml.
 #
-# Only tag (v*) and manual events carry the npm_token secret (push/pull_request do not, and this
+# Only tag (v*) and manual events carry the npmjs_token secret (push/pull_request do not, and this
 # is a public repo with require_approval=forks) — so this is the only trigger set that can ever
 # see NODE_AUTH_TOKEN.
 #
@@ -34,12 +34,12 @@ steps:
     image: node:24
     environment:
       NODE_AUTH_TOKEN:
-        from_secret: npm_token
+        from_secret: npmjs_token
     commands:
       - cd packages/tessera-ts
       # Presence-only check (length, never the value) — fails fast with a clear message instead
       # of a confusing downstream ENEEDAUTH if the secret didn't get injected for this event.
-      - test -n "$NODE_AUTH_TOKEN" || (echo "NODE_AUTH_TOKEN is empty — npm_token secret not injected for this event" && exit 1)
+      - test -n "$NODE_AUTH_TOKEN" || (echo "NODE_AUTH_TOKEN is empty — npmjs_token secret not injected for this event" && exit 1)
       # publishConfig.registry (registry.npmjs.org) is the public npm registry — no committed
       # .npmrc in this repo maps it to a token, so write one for this step only.
       # NOTE: deliberately NOT using npm's own brace-variable .npmrc convention (dollar sign,

@@ -56,15 +56,14 @@ steps:
       - npm audit --omit=dev
       - npm run build:ts
       # Idempotent: publish only if this version isn't already on the registry. Re-tagging after
-      # a partial release is safe; any other error still fails the job. The public npm registry
-      # reports this as 409/EPUBLISHCONFLICT ("cannot publish over the previously published
-      # version"); GitHub Packages would use 403/E403 — match both forms in case the registry
-      # ever changes. This is a deliberate improvement over the GitHub Actions job, which hard-
-      # failed on a re-publish of an already-released version.
+      # a partial release is safe; any other error still fails the job. The skip-guard matches
+      # ONLY the explicit version-conflict signals ("cannot publish over" text, EPUBLISHCONFLICT).
+      # Deliberately NOT matching bare 403/E403: registry.npmjs.org uses 403 for auth denials
+      # too, and a broad match would silently swallow a real auth failure as "already published".
       # On any other failure, print err.log before re-raising so the real npm error (e.g. auth)
       # is visible in the step log instead of being silently swallowed in the redirected file.
       - |
         npm publish 2>err.log \
-          || (grep -qiE "cannot publish over|409 Conflict|EPUBLISHCONFLICT|E403" err.log \
+          || (grep -qiE "cannot publish over|EPUBLISHCONFLICT" err.log \
               && echo "version already published — skipping" \
               || (cat err.log; exit 1))

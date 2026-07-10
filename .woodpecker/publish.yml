@@ -1,0 +1,55 @@
+# publish — releases @ciphera-net/tessera to the public npm registry on a version tag (v*),
+# or via manual trigger. Builds the WASM (web + node) from the public ciphera-tessera sibling
+# and the TS dist/, then `npm publish`. The wasm-build steps mirror rust.yml/handshake.yml.
+#
+# Only tag (v*) and manual events carry the npm_token secret (push/pull_request do not, and this
+# is a public repo with require_approval=forks) — so this is the only trigger set that can ever
+# see NODE_AUTH_TOKEN.
+#
+# OWNER PREREQUISITES:
+#   • ciphera-net/tessera is PUBLIC — no auth needed for the sibling clone.
+#   • packages/tessera-ts/package.json publishConfig points at registry.npmjs.org (the public npm
+#     registry, NOT GitHub Packages) — @ciphera-net/tessera ships as a real public npm package.
+#   • Bump packages/tessera-ts/package.json "version" and push a matching tag,
+#     e.g. `git tag v0.1.4 && git push origin v0.1.4`.
+
+when:
+  - event: tag
+    ref: refs/tags/v*
+  - event: manual
+
+steps:
+  build:
+    image: rust:1
+    commands:
+      - D=$(dirname $(pwd))
+      - git clone --depth 1 https://github.com/ciphera-net/tessera.git "$D/ciphera-tessera"
+      - rustup target add wasm32-unknown-unknown
+      # Pinned + checksummed (crates.io) install — NOT an unverified curl|sh of whatever the installer
+      # endpoint currently serves. --locked builds with wasm-pack's own committed Cargo.lock.
+      - cargo install wasm-pack --version 0.15.0 --locked
+      - bash packages/tessera-ts/scripts/build-wasm.sh
+
+  publish:
+    image: node:24
+    environment:
+      NODE_AUTH_TOKEN:
+        from_secret: npm_token
+    commands:
+      - cd packages/tessera-ts
+      # publishConfig.registry (registry.npmjs.org) is the public npm registry — no committed
+      # .npmrc in this repo maps it to a token, so write one for this step only.
+      - printf 'registry=https://registry.npmjs.org\n//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+      - npm ci
+      - npm audit --omit=dev
+      - npm run build:ts
+      # Idempotent: publish only if this version isn't already on the registry. Re-tagging after
+      # a partial release is safe; any other error still fails the job. The public npm registry
+      # reports this as 409/EPUBLISHCONFLICT ("cannot publish over the previously published
+      # version"); GitHub Packages would use 403/E403 — match both forms in case the registry
+      # ever changes. This is a deliberate improvement over the GitHub Actions job, which hard-
+      # failed on a re-publish of an already-released version.
+      - |
+        npm publish 2>err.log \
+          || (grep -qiE "cannot publish over|409 Conflict|EPUBLISHCONFLICT|E403" err.log \
+              && echo "version already published — skipping")

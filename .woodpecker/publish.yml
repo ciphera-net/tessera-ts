@@ -42,7 +42,14 @@ steps:
       - test -n "$NODE_AUTH_TOKEN" || (echo "NODE_AUTH_TOKEN is empty — npm_token secret not injected for this event" && exit 1)
       # publishConfig.registry (registry.npmjs.org) is the public npm registry — no committed
       # .npmrc in this repo maps it to a token, so write one for this step only.
-      - printf 'registry=https://registry.npmjs.org\n//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+      # NOTE: deliberately NOT using npm's own "${NODE_AUTH_TOKEN}"-in-.npmrc convention here —
+      # Woodpecker performs its own ${VAR} substitution on `commands:` strings at pipeline-compile
+      # time (only its built-in CI_*/matrix vars are recognized), so a literal ${NODE_AUTH_TOKEN}
+      # in this YAML gets silently rewritten to an empty string before the shell ever sees it,
+      # producing a token-less .npmrc and a hard-to-diagnose ENEEDAUTH. Using printf's %s with the
+      # token as a separate shell-expanded argument (no ${...}-shaped substring in the YAML at all)
+      # sidesteps Woodpecker's compile-time pass entirely.
+      - printf 'registry=https://registry.npmjs.org\n//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$HOME/.npmrc"
       - npm ci
       - npm audit --omit=dev
       - npm run build:ts

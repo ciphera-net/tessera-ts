@@ -3,6 +3,7 @@
 #   crates/tessera-wasm/Cargo.toml → ciphera-tessera = { path = "../../../ciphera-tessera" }
 # From crates/tessera-wasm/ that is up 3 → the sibling of this repo's clone. The clone dir MUST be
 # literally named "ciphera-tessera" for the relative path to resolve.
+# (Fastest gate; no depends_on — runs first in the DAG.)
 when:
   - event: push
     branch: main

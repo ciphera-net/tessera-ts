@@ -37,6 +37,9 @@ steps:
         from_secret: npm_token
     commands:
       - cd packages/tessera-ts
+      # Presence-only check (length, never the value) — fails fast with a clear message instead
+      # of a confusing downstream ENEEDAUTH if the secret didn't get injected for this event.
+      - test -n "$NODE_AUTH_TOKEN" || (echo "NODE_AUTH_TOKEN is empty — npm_token secret not injected for this event" && exit 1)
       # publishConfig.registry (registry.npmjs.org) is the public npm registry — no committed
       # .npmrc in this repo maps it to a token, so write one for this step only.
       - printf 'registry=https://registry.npmjs.org\n//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
@@ -49,7 +52,10 @@ steps:
       # version"); GitHub Packages would use 403/E403 — match both forms in case the registry
       # ever changes. This is a deliberate improvement over the GitHub Actions job, which hard-
       # failed on a re-publish of an already-released version.
+      # On any other failure, print err.log before re-raising so the real npm error (e.g. auth)
+      # is visible in the step log instead of being silently swallowed in the redirected file.
       - |
         npm publish 2>err.log \
           || (grep -qiE "cannot publish over|409 Conflict|EPUBLISHCONFLICT|E403" err.log \
-              && echo "version already published — skipping")
+              && echo "version already published — skipping" \
+              || (cat err.log; exit 1))

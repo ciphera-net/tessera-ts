@@ -1,0 +1,38 @@
+# browser — real-browser matrix (needs: handshake). Web-target wasm + WebCrypto on Chromium + WebKit,
+# plus the WebAuthn-PRF ceremony via a CDP virtual authenticator (Chromium). Needs ONLY the public core
+# sibling (for the wasm path-dep build) — no sidecar, no tessera-go (the browser specs don't use them).
+#   $D/tessera-ts/       ← this repo's clone
+#   $D/ciphera-tessera/  ← public Rust core (Cargo.toml path dep for the wasm build)
+#
+# The wasm build needs cargo/wasm-pack (rust:1); the Playwright image has no cargo, so wasm is built in
+# a separate rust:1 step and the outputs carry over the shared workspace. The Playwright image
+# (v1.48.2-jammy, matching @playwright/test ^1.48.0) preinstalls the chromium+webkit system deps.
+depends_on:
+  - handshake
+
+when:
+  - event: push
+    branch: main
+  - event: pull_request
+
+steps:
+  build:
+    image: rust:1
+    commands:
+      - D=$(dirname $(pwd))
+      - git clone --depth 1 https://github.com/ciphera-net/tessera.git "$D/ciphera-tessera"
+      - rustup target add wasm32-unknown-unknown
+      # Pinned + checksummed (crates.io) install — NOT an unverified curl|sh of whatever the installer
+      # endpoint currently serves. --locked builds with wasm-pack's own committed Cargo.lock.
+      - cargo install wasm-pack --version 0.15.0 --locked
+      - bash packages/tessera-ts/scripts/build-wasm.sh
+
+  browser:
+    image: mcr.microsoft.com/playwright:v1.48.2-jammy
+    commands:
+      - cd packages/tessera-ts
+      - npm ci
+      # System deps are preinstalled in the Playwright image; --with-deps is a fast no-op double-check
+      # and still fetches the browser binaries matching the npm-resolved Playwright version.
+      - npx playwright install --with-deps chromium webkit
+      - npx playwright test

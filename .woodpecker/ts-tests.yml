@@ -1,0 +1,52 @@
+# ts-tests — full TypeScript suite (needs: handshake). Unit tests, parity tests (TS↔Go), and
+# canonical conformance vectors. The parity harnesses shell out to `go run` against the tessera-go
+# sibling, so all three repos must be present as siblings:
+#   $D/tessera-ts/       ← this repo's clone
+#   $D/ciphera-tessera/  ← public Rust core (Cargo.toml path dep + sidecar + vectors)
+#   $D/tessera-go/       ← public Go SDK (harness/{vault,blindindex}-parity go.mod replace → ../../../tessera-go)
+#
+# vitest runs execFileSync('go', ['run', '.', ...]) from the parity harness dirs, so `go` must be on
+# PATH in the SAME container that runs vitest. The node:24 image has no Go, so we install the official
+# go1.25 tarball (direct from go.dev — Google's own distribution, checksum-verified) into that step.
+# Steps run in separate containers; only the shared workspace filesystem persists, so the sibling
+# clones (done in the rust step) carry over, and $D/env vars are recomputed per step.
+depends_on:
+  - handshake
+
+when:
+  - event: push
+    branch: main
+  - event: pull_request
+
+steps:
+  build:
+    image: rust:1
+    commands:
+      - D=$(dirname $(pwd))
+      - git clone --depth 1 https://github.com/ciphera-net/tessera.git "$D/ciphera-tessera"
+      - git clone --depth 1 https://github.com/ciphera-net/tessera-go.git "$D/tessera-go"
+      - rustup target add wasm32-unknown-unknown
+      # Pinned + checksummed (crates.io) install — NOT an unverified curl|sh of whatever the installer
+      # endpoint currently serves. --locked builds with wasm-pack's own committed Cargo.lock.
+      - cargo install wasm-pack --version 0.15.0 --locked
+      - (cd "$D/ciphera-tessera" && cargo build --release --bin tessera-sidecar)
+      - bash packages/tessera-ts/scripts/build-wasm.sh
+
+  tests:
+    image: node:24
+    commands:
+      - D=$(dirname $(pwd))
+      # Install Go 1.25 (official go.dev tarball, sha256-verified) — vitest parity harnesses `go run`.
+      - GO_TARBALL=go1.25.12.linux-amd64.tar.gz
+      - GO_SHA256=234828b7a89e0e303d2556310ee549fbcf253d28de937bac3da13d6294262ac1
+      - curl -fsSLO "https://go.dev/dl/$GO_TARBALL"
+      - echo "$GO_SHA256  $GO_TARBALL" | sha256sum -c -
+      - tar -C /usr/local -xzf "$GO_TARBALL"
+      - export PATH="/usr/local/go/bin:$PATH"
+      - go version
+      - export TESSERA_SIDECAR_BIN="$D/ciphera-tessera/target/release/tessera-sidecar"
+      - cd packages/tessera-ts
+      - npm ci
+      - npm audit --omit=dev
+      - npx vitest run
+      - npx tsc --noEmit

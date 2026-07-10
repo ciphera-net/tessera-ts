@@ -1,0 +1,21 @@
+# rust — lint/build gate. Clones the public core sibling (ciphera-net/tessera) as
+# ../ciphera-tessera so the Cargo.toml path dep resolves:
+#   crates/tessera-wasm/Cargo.toml → ciphera-tessera = { path = "../../../ciphera-tessera" }
+# From crates/tessera-wasm/ that is up 3 → the sibling of this repo's clone. The clone dir MUST be
+# literally named "ciphera-tessera" for the relative path to resolve.
+when:
+  - event: push
+    branch: main
+  - event: pull_request
+
+steps:
+  rust:
+    image: rust:1
+    commands:
+      - D=$(dirname $(pwd))
+      - git clone --depth 1 https://github.com/ciphera-net/tessera.git "$D/ciphera-tessera"
+      - rustup target add wasm32-unknown-unknown
+      - rustup component add rustfmt clippy
+      - cargo fmt --check
+      - cargo clippy --target wasm32-unknown-unknown -- -D warnings
+      - cargo build --target wasm32-unknown-unknown

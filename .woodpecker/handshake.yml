@@ -1,0 +1,40 @@
+# handshake — gate (needs: rust). Builds the sidecar + WASM pack outputs, then runs the
+# node:test handshake harness. If the register→login round-trip over the IPC channel is broken,
+# ts-tests never starts.
+#
+# Workspace layout (siblings under a common parent, matching the Cargo.toml path arithmetic):
+#   $D/tessera-ts/       ← this repo's clone (this step's cwd on the rust step)
+#   $D/ciphera-tessera/  ← public Rust core, cloned below (dir name must be exactly ciphera-tessera)
+# Steps run in separate containers; only the shared workspace filesystem persists between them
+# (env vars do NOT cross steps), so $D and TESSERA_SIDECAR_BIN are recomputed in each step.
+depends_on:
+  - rust
+
+when:
+  - event: push
+    branch: main
+  - event: pull_request
+
+steps:
+  build:
+    image: rust:1
+    commands:
+      - D=$(dirname $(pwd))
+      - git clone --depth 1 https://github.com/ciphera-net/tessera.git "$D/ciphera-tessera"
+      - rustup target add wasm32-unknown-unknown
+      # Pinned + checksummed (crates.io) install — NOT an unverified curl|sh of whatever the installer
+      # endpoint currently serves. --locked builds with wasm-pack's own committed Cargo.lock.
+      - cargo install wasm-pack --version 0.15.0 --locked
+      # Sidecar binary lands at $D/ciphera-tessera/target/release/tessera-sidecar
+      - (cd "$D/ciphera-tessera" && cargo build --release --bin tessera-sidecar)
+      # build-wasm.sh only needs wasm-pack (a cargo tool); it writes
+      #   packages/tessera-ts/wasm/{web,node}/ (root-relative to this repo clone).
+      - bash packages/tessera-ts/scripts/build-wasm.sh
+
+  handshake:
+    image: node:24
+    commands:
+      - D=$(dirname $(pwd))
+      - export TESSERA_SIDECAR_BIN="$D/ciphera-tessera/target/release/tessera-sidecar"
+      # Plain ESM harness with node:test imports only — no npm install needed.
+      - node --test harness/handshake/handshake.test.mjs

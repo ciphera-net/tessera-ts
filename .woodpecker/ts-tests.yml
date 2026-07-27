@@ -10,6 +10,16 @@
 # go1.25 tarball (direct from go.dev — Google's own distribution, checksum-verified) into that step.
 # Steps run in separate containers; only the shared workspace filesystem persists, so the sibling
 # clones (done in the rust step) carry over, and $D/env vars are recomputed per step.
+# Routes this workflow to the in-cluster Kubernetes agent, which advertises
+# `!runner=k8s` — a MANDATORY label, so an agent is only eligible when a task
+# asks for it. Deleting this line sends the workflow back to the ci-ops Docker
+# agent; that is the rollback, and it is one line.
+#
+# This repo builds no container image, so there is nothing else to convert: no
+# buildx plugin, no registry push, no extra_hosts, no repo trust needed.
+labels:
+  runner: k8s
+
 depends_on:
   - handshake
 

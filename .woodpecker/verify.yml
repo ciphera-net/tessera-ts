@@ -1,0 +1,168 @@
+# verify — the wasm/sidecar build ONCE, then everything that depends on it.
+#
+# 🔴 THIS FILE REPLACES handshake.yml + ts-tests.yml + browser.yml (20-08-2026).
+#
+# WHY. Those three workflows each began with a byte-identical `build:` step, and
+# all three ran on every push to main and every pull request. Woodpecker gives
+# each WORKFLOW its own pod and its own workspace volume and they share nothing,
+# so each one cloned the core, installed the wasm toolchain, and rebuilt the wasm
+# (two of them the sidecar as well) from a blank workspace. Measured medians:
+#
+#     handshake/build   407s
+#     browser/build     453s
+#     ts-tests/build    501s     <- ~900s of the same work, done three times
+#
+# tessera-ts's median pipeline was 25.7 MINUTES, the worst in the estate, and
+# roughly 900s of that was rebuilding what the previous workflow had just built
+# and thrown away. Steps INSIDE one workflow do share a filesystem, which is the
+# entire reason this file exists: build once, then use it.
+#
+# ⚠️ THE STEPS BELOW MUST STAY SEQUENTIAL. Do NOT add step-level `depends_on:`
+# to make ts-tests and browser run in parallel. Exoscale block storage has no
+# RWX mode, so this workflow's single PVC attaches to ONE NODE AT A TIME; two
+# step pods scheduled to different nodes would deadlock on FailedMount with
+# nothing in Woodpecker's UI explaining why (upstream #3344 — it is what
+# WoodpeckerBuildPodPending exists to catch). Woodpecker runs steps in
+# declaration order by default, so the safe configuration is simply to declare
+# no step dependencies at all. The parallelism was never real anyway: the estate
+# runs WOODPECKER_MAX_WORKFLOWS=2, so browser and ts-tests were already
+# competing for the same two org-wide slots.
+#
+# 🔑 CHECK CONTEXTS CHANGED WITH THIS FILE. `ci/woodpecker/pr/handshake`,
+# `/ts-tests` and `/browser` no longer exist; `ci/woodpecker/pr/verify` replaces
+# all three. Branch protection on main was updated in the same change — leaving
+# the old contexts required would have blocked every future PR forever on checks
+# that can never report. `ci/woodpecker/pr/rust` is unchanged and still required.
+#
+# Workspace layout (siblings under a common parent, matching the Cargo.toml path
+# arithmetic). Cloned once in `build:` and reused by every step after it:
+#   $D/tessera-ts/       <- this repo's clone
+#   $D/ciphera-tessera/  <- public Rust core (path dep + sidecar + vectors)
+#   $D/tessera-go/       <- public Go SDK (parity harness go.mod replace)
+# Env vars do NOT cross steps, so $D and TESSERA_SIDECAR_BIN are recomputed in
+# each step; only the shared workspace filesystem persists.
+#
+# Routes this workflow to the in-cluster Kubernetes agent, which advertises
+# `!runner=k8s` — a MANDATORY label, so an agent is only eligible when a task
+# asks for it.
+#
+# This repo builds no container image: no kaniko, no registry push, no
+# extra_hosts, no repo trust needed.
+# See Infra/docs/audits/20-08-2026-ci-latency-audit.md §5.4.
+labels:
+  runner: k8s
+
+depends_on:
+  - rust
+
+when:
+  - event: push
+    branch: main
+  - event: pull_request
+
+steps:
+  # The ONE build. Everything below consumes its output from the shared workspace.
+  build:
+    image: rust:1
+    # Resources declared 29-07-2026 — without them the step pod is QoS BestEffort,
+    # first evicted under node memory pressure. Estate-wide sweep after two
+    # pulse-backend steps were SIGKILLed (exit 137) mid-download, presenting as a
+    # test failure (see pulse-backend #147/#148). Sized by step class.
+    backend_options:
+      kubernetes:
+        resources:
+          requests: { memory: 2Gi, cpu: 1 }
+          limits: { memory: 6Gi }
+    commands:
+      - D=$(dirname $(pwd))
+      # Both siblings are cloned here, once. ts-tests.yml used to clone tessera-go
+      # separately; browser.yml and handshake.yml cloned only the core.
+      - git clone --depth 1 https://github.com/ciphera-net/tessera.git "$D/ciphera-tessera"
+      - git clone --depth 1 https://github.com/ciphera-net/tessera-go.git "$D/tessera-go"
+      - rustup target add wasm32-unknown-unknown
+      # 🔑 PREBUILT, CHECKSUM-PINNED wasm-pack — NOT `cargo install`.
+      # `cargo install wasm-pack --version 0.15.0 --locked` COMPILED IT FROM
+      # SOURCE on every run, and it ran three times per pipeline. The official
+      # release tarball is the same artifact the crate would have produced,
+      # verified by sha256 rather than trusted — the identical pattern this repo
+      # already uses for the Go tarball in the ts-tests step below, and still NOT
+      # an unverified curl|sh of whatever an installer endpoint currently serves.
+      # Upstream moved the repo rustwasm/wasm-pack -> wasm-bindgen/wasm-pack;
+      # the download host follows the redirect, so the URL below is the current one.
+      - WP=wasm-pack-v0.15.0-x86_64-unknown-linux-musl
+      - WP_SHA256=c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+      - curl -fsSLO "https://github.com/wasm-bindgen/wasm-pack/releases/download/v0.15.0/$WP.tar.gz"
+      - echo "$WP_SHA256  $WP.tar.gz" | sha256sum -c -
+      - tar -xzf "$WP.tar.gz"
+      - install -m 0755 "$WP/wasm-pack" /usr/local/cargo/bin/wasm-pack
+      - wasm-pack --version
+      # Sidecar binary lands at $D/ciphera-tessera/target/release/tessera-sidecar
+      - (cd "$D/ciphera-tessera" && cargo build --release --bin tessera-sidecar)
+      # build-wasm.sh writes packages/tessera-ts/wasm/{web,node}/ (root-relative).
+      - bash packages/tessera-ts/scripts/build-wasm.sh
+
+  # The gate. If the register->login round-trip over the IPC channel is broken,
+  # there is no point running the suites below — and because these are steps of
+  # one workflow now, a failure here stops them without a second build.
+  handshake:
+    image: node:24
+    backend_options:
+      kubernetes:
+        resources:
+          requests: { memory: 1Gi, cpu: 500m }
+          limits: { memory: 4Gi }
+    commands:
+      - D=$(dirname $(pwd))
+      - export TESSERA_SIDECAR_BIN="$D/ciphera-tessera/target/release/tessera-sidecar"
+      # Plain ESM harness with node:test imports only — no npm install needed.
+      - node --test harness/handshake/handshake.test.mjs
+
+  # Full TypeScript suite: unit, parity (TS<->Go), canonical conformance vectors.
+  # vitest shells out to `go run` from the parity harness dirs, so `go` must be on
+  # PATH in THIS container; the node:24 image has none.
+  ts-tests:
+    image: node:24
+    backend_options:
+      kubernetes:
+        resources:
+          requests: { memory: 1Gi, cpu: 500m }
+          limits: { memory: 4Gi }
+    commands:
+      - D=$(dirname $(pwd))
+      # Official go.dev tarball, sha256-verified — Google's own distribution.
+      - GO_TARBALL=go1.25.12.linux-amd64.tar.gz
+      - GO_SHA256=234828b7a89e0e303d2556310ee549fbcf253d28de937bac3da13d6294262ac1
+      - curl -fsSLO "https://go.dev/dl/$GO_TARBALL"
+      - echo "$GO_SHA256  $GO_TARBALL" | sha256sum -c -
+      - tar -C /usr/local -xzf "$GO_TARBALL"
+      - export PATH="/usr/local/go/bin:$PATH"
+      - go version
+      - export TESSERA_SIDECAR_BIN="$D/ciphera-tessera/target/release/tessera-sidecar"
+      - cd packages/tessera-ts
+      - npm ci
+      - npm audit --omit=dev
+      - npx vitest run
+      - npx tsc --noEmit
+
+  # Real-browser matrix: web-target wasm + WebCrypto on Chromium and WebKit, plus
+  # the WebAuthn-PRF ceremony via a CDP virtual authenticator (Chromium).
+  # The Playwright image (v1.48.2-jammy, matching @playwright/test ^1.48.0)
+  # preinstalls the chromium+webkit system deps.
+  browser:
+    image: mcr.microsoft.com/playwright:v1.48.2-jammy
+    backend_options:
+      kubernetes:
+        resources:
+          requests: { memory: 2Gi, cpu: 1 }
+          limits: { memory: 6Gi }
+    commands:
+      - cd packages/tessera-ts
+      # Kept even though ts-tests already ran it: this is a DIFFERENT image with a
+      # different Node, and any native module in node_modules would be built
+      # against the wrong ABI. ~13s to remove a whole class of confusing failure.
+      - npm ci
+      # System deps are preinstalled in the image; --with-deps is a fast no-op
+      # double-check that still fetches browser binaries matching the npm-resolved
+      # Playwright version.
+      - npx playwright install --with-deps chromium webkit
+      - npx playwright test

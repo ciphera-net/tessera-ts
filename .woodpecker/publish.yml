@@ -44,9 +44,19 @@ steps:
       - D=$(dirname $(pwd))
       - git clone --depth 1 https://github.com/ciphera-net/tessera.git "$D/ciphera-tessera"
       - rustup target add wasm32-unknown-unknown
-      # Pinned + checksummed (crates.io) install — NOT an unverified curl|sh of whatever the installer
-      # endpoint currently serves. --locked builds with wasm-pack's own committed Cargo.lock.
-      - cargo install wasm-pack --version 0.15.0 --locked
+      # 🔑 PREBUILT, CHECKSUM-PINNED wasm-pack — NOT `cargo install`, which
+      # compiled it FROM SOURCE on every run. The official release tarball is the
+      # same artifact the crate would have produced, verified by sha256 rather
+      # than trusted — the identical pattern used for the Go tarball elsewhere in
+      # this repo, and still NOT an unverified curl|sh. Matches verify.yml; keep
+      # the version and hash in step if either moves.
+      - WP=wasm-pack-v0.15.0-x86_64-unknown-linux-musl
+      - WP_SHA256=c09f971ecaed9a2efc80fdcea7a00ef6b53c7fadc8c57d1f61b53a6aa66b668a
+      - curl -fsSLO "https://github.com/wasm-bindgen/wasm-pack/releases/download/v0.15.0/$WP.tar.gz"
+      - echo "$WP_SHA256  $WP.tar.gz" | sha256sum -c -
+      - tar -xzf "$WP.tar.gz"
+      - install -m 0755 "$WP/wasm-pack" /usr/local/cargo/bin/wasm-pack
+      - wasm-pack --version
       - bash packages/tessera-ts/scripts/build-wasm.sh
 
   publish:

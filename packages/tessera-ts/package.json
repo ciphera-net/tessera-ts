@@ -1,10 +1,10 @@
 {
   "name": "@ciphera-net/tessera",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": false,
   "type": "module",
   "license": "Apache-2.0",
-  "description": "Tessera browser SDK — OPAQUE auth, blind index, vault, BIP-39 recovery, WebAuthn-PRF (WASM + WebCrypto).",
+  "description": "Tessera browser SDK \u2014 OPAQUE auth, blind index, vault, BIP-39 recovery, WebAuthn-PRF (WASM + WebCrypto).",
   "homepage": "https://ciphera.net",
   "repository": {
     "type": "git",

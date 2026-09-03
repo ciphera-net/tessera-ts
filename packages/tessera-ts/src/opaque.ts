@@ -5,7 +5,38 @@
 // WASM Finish handles are freed once their bytes are consumed (zeroizes the in-WASM key copies).
 import { fromBase64Std, toBase64Std } from './encoding.js';
 import { createRegistrationHandle, createLoginHandle } from './wasm.js';
+import { InvalidCredentialsError, OpaqueProtocolError } from './errors.js';
 import type { Transport } from './transport.js';
+
+/**
+ * Translate a failure from inside the WASM core into this package's error
+ * taxonomy.
+ *
+ * 🔴 WHY THIS EXISTS. The Rust binding raises every error as
+ * `JsError::new(&format!("{e:?}"))` — a `Debug` rendering of the Rust enum. So a
+ * wrong password arrives in JavaScript as an `Error` whose message is literally
+ * `Opaque(InvalidLoginError)`. Nothing wrapped it, so it flowed through
+ * consumers' catch blocks and was rendered to users verbatim: id.ciphera.net's
+ * sign-in page showed `Opaque(InvalidLoginError)` in its error banner for the
+ * single most common failure in the product (observed 03-09-2026).
+ *
+ * 🔑 The classification is by Debug string because that is the only signal the
+ * boundary offers today. That is brittle by nature, so the DEFAULT is the safe
+ * one: anything unrecognised becomes `OpaqueProtocolError`, never
+ * `InvalidCredentialsError`. A future core release can emit a stable code (the
+ * Rust `TesseraError::code()` already returns `"invalid_credentials"`) and this
+ * can match on that instead — the exported types would not change.
+ *
+ * Either way, BOTH results carry a fixed `tessera:`-prefixed message, so no
+ * WASM-internal string can reach a UI again regardless of how the match goes.
+ */
+function opaqueFailure(cause: unknown): Error {
+  const raw = cause instanceof Error ? cause.message : String(cause);
+  // `ProtocolError::InvalidLoginError` is the OPAQUE "envelope did not open"
+  // result — the definition of a wrong password.
+  if (/InvalidLoginError/.test(raw)) return new InvalidCredentialsError();
+  return new OpaqueProtocolError(cause);
+}
 
 /** Drive OPAQUE registration. Returns the 64-byte export_key (CLIENT-ONLY). The server stores the
  *  password file (void). */
@@ -17,7 +48,14 @@ export async function registerOpaque(
   const reg = createRegistrationHandle(password);
   try {
     const { responseB64 } = await t.registerStart({ requestB64: toBase64Std(reg.request), credentialId });
-    const fin = reg.finish(password, fromBase64Std(responseB64));
+    let fin;
+    try {
+      fin = reg.finish(password, fromBase64Std(responseB64));
+    } catch (e) {
+      // Registration has no wrong-password case — the password is being SET —
+      // so any failure here is a protocol fault, never invalid credentials.
+      throw new OpaqueProtocolError(e);
+    }
     try {
       const uploadB64 = toBase64Std(fin.upload);
       const exportKey = fin.exportKey; // getter returns a fresh JS copy; caller owns/zeroes it
@@ -40,7 +78,14 @@ export async function loginOpaque(
   const lh = createLoginHandle(password);
   try {
     const { loginId, responseB64 } = await t.loginStart({ requestB64: toBase64Std(lh.request), credentialId });
-    const lf = lh.finish(password, fromBase64Std(responseB64));
+    // 🔴 THE wrong-password site. The server cannot detect a bad password; this
+    // call is where it surfaces, as a Rust `Debug` string. Classify it.
+    let lf;
+    try {
+      lf = lh.finish(password, fromBase64Std(responseB64));
+    } catch (e) {
+      throw opaqueFailure(e);
+    }
     try {
       const finalizationB64 = toBase64Std(lf.finalization);
       const exportKey = lf.exportKey;
@@ -64,7 +109,13 @@ export async function resetPasswordOpaque(
   const reg = createRegistrationHandle(newPassword);
   try {
     const { responseB64 } = await t.registerStart({ requestB64: toBase64Std(reg.request), credentialId });
-    const fin = reg.finish(newPassword, fromBase64Std(responseB64));
+    let fin;
+    try {
+      fin = reg.finish(newPassword, fromBase64Std(responseB64));
+    } catch (e) {
+      // Setting a password, not proving one — no invalid-credentials case here.
+      throw new OpaqueProtocolError(e);
+    }
     try {
       const uploadB64 = toBase64Std(fin.upload);
       const exportKey = fin.exportKey;
@@ -108,7 +159,16 @@ export async function recoveryLoginOpaque(
       requestB64: toBase64Std(lh.request),
       blindIndex,
     });
-    const lf = lh.finish(phrasePassword, fromBase64Std(responseB64));
+    // The wrong-PHRASE site. Same mechanism as a wrong password: the server
+    // verified nothing about the phrase's correctness, the envelope did. R6's
+    // /recover depends on telling this apart from a broken ceremony — a user who
+    // mistyped a word must be told to retype it, not that recovery is down.
+    let lf;
+    try {
+      lf = lh.finish(phrasePassword, fromBase64Std(responseB64));
+    } catch (e) {
+      throw opaqueFailure(e);
+    }
     try {
       const finalizationB64 = toBase64Std(lf.finalization);
       const exportKey = lf.exportKey;
@@ -144,7 +204,13 @@ export async function registerRecoveryIdentity(
       requestB64: toBase64Std(reg.request),
       credentialId: credentialIdB64,
     });
-    const fin = reg.finish(phrasePassword, fromBase64Std(responseB64));
+    let fin;
+    try {
+      fin = reg.finish(phrasePassword, fromBase64Std(responseB64));
+    } catch (e) {
+      // Registering the recovery record — setting a credential, not proving one.
+      throw new OpaqueProtocolError(e);
+    }
     try {
       const uploadB64 = toBase64Std(fin.upload);
       fin.exportKey.fill(0); // materialised only to be zeroed; see above

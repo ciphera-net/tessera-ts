@@ -18,4 +18,6 @@ export {
   MalformedEnvelopeError,
   EmptyVaultKeyError,
   EmptyContextError,
+  InvalidCredentialsError,
+  OpaqueProtocolError,
 } from './errors.js';

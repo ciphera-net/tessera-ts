@@ -297,6 +297,45 @@ An envelope sealed under `"address"` cannot be opened under `"totp"` — wrong-c
 
 For wrong-key, wrong-context, and GCM tag failure, `open` throws a generic `Error` — there is no specific class that reveals which check failed (no decryption oracle).
 
+### OPAQUE ceremony errors
+
+The register/login ceremonies raise two further classes. Both carry a fixed
+`tessera:`-prefixed message, so nothing from inside the WASM core can reach a UI.
+
+| Class | When |
+|---|---|
+| `InvalidCredentialsError` | the password (or recovery phrase) did not open the OPAQUE envelope — i.e. it is wrong |
+| `OpaqueProtocolError` | the ceremony failed for any other reason: malformed or tampered server response, serialization fault, internal library error. `cause` carries the original |
+
+🔑 **The server cannot tell a right password from a wrong one.** In OPAQUE only
+the client can, at `login_finish`, when the envelope fails to open — so
+`InvalidCredentialsError` is the canonical wrong-password signal for the whole
+system, not any HTTP status.
+
+⚠️ **Distinguishing these two is deliberate, and folding them together is a
+bug.** Reporting a broken ceremony as "wrong password" sends a user to reset a
+password that was already correct, and hides a real fault behind the one message
+nobody investigates. Unlike the vault-envelope errors above — which are kept
+indistinguishable because telling them apart would be a decryption oracle — the
+login outcome is safe to report: it describes a password the caller just typed.
+
+```ts
+import { InvalidCredentialsError, OpaqueProtocolError } from '@ciphera-net/tessera'
+
+try {
+  await tessera.login({ email, password })
+} catch (e) {
+  if (e instanceof InvalidCredentialsError) setError('Incorrect email or password.')
+  else if (e instanceof OpaqueProtocolError) setError('Sign-in is temporarily unavailable.')
+  else throw e
+}
+```
+
+Before 0.2.1 these were not wrapped at all: the Rust core raises
+`JsError::new(&format!("{e:?}"))`, so a wrong password surfaced as an `Error`
+whose message was literally `Opaque(InvalidLoginError)` — and consumers rendered
+that string to users.
+
 ---
 
 ## Crypto parameters (pinned)

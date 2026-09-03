@@ -3,12 +3,19 @@
 // — they never persist and never cross the wire. The VMK is held as a non-extractable CryptoKey inside
 // the returned Session; the raw VMK never leaves WASM/JS linear memory at rest.
 import { blindIndexString } from './blindIndex.js';
-import { loginOpaque, registerOpaque, resetPasswordOpaque } from './opaque.js';
+import {
+  loginOpaque,
+  registerOpaque,
+  resetPasswordOpaque,
+  recoveryLoginOpaque,
+  registerRecoveryIdentity,
+} from './opaque.js';
 import { generateAndWrap, openVaultKey, rewrapForMethod } from './vmk.js';
-import { newRecoveryPhrase, recoverySecret } from './recovery.js';
+import { newRecoveryPhrase, recoverySecret, recoveryPhrasePassword } from './recovery.js';
 import type { PrfProvider } from './passkey.js';
 import { open as vaultOpen, seal as vaultSeal, type VaultKey } from './vault.js';
 import { fromBase64Std, toBase64Std } from './encoding.js';
+import { createRegistrationHandle } from './wasm.js';
 import type { Transport } from './transport.js';
 
 // VMK-wrap blobs are stored as standard base64 (they are opaque server storage, not OPAQUE wire blobs).
@@ -133,50 +140,17 @@ export class Tessera {
     }
   }
 
-  /** Recover via the BIP-39 phrase: unwrap the VMK from the 'recovery' wrap → a Session (no OPAQUE
-   *  session key) plus a single-use `resetPassword`. The recovery secret + wrap blob are held in the
-   *  returned closure ONLY because the session VMK is non-extractable and cannot itself be re-wrapped;
-   *  resetPassword re-derives the raw VMK from the recovery wrap and re-wraps it under the new password,
-   *  so the vault is never re-encrypted. The recovery secret is zeroed once resetPassword runs — or, if
-   *  the caller never calls resetPassword, once dispose() is called. If NEITHER is called, the 32-byte
-   *  recovery secret persists in this session for its lifetime; discard the session promptly. */
-  async recoverWithPhrase({
-    email,
-    phrase,
-  }: {
-    email: string;
-    phrase: string;
-  }): Promise<RecoverySession> {
-    const credentialId = blindIndexString(email);
-    const recovSecret = recoverySecret(phrase); // throws on bad checksum
-    const recoveryWrap = await this.transport.getWrap({ credentialId, method: 'recovery' });
-    if (!recoveryWrap) throw new Error('tessera: no recovery wrap for this account');
-    const recoveryBlob = fromB64(recoveryWrap.blobB64);
-    const vmk = await openVaultKey(recoveryBlob, recovSecret, 'recovery'); // throws if phrase is wrong
-    const transport = this.transport;
-    return {
-      ...sessionFor(vmk, /* no OPAQUE session on the recovery path */ null),
-      async resetPassword(newPassword: Uint8Array): Promise<void> {
-        const { exportKey } = await resetPasswordOpaque(transport, credentialId, newPassword);
-        try {
-          // Re-wrap the SAME VMK (re-derived from the recovery wrap) under the new export_key.
-          const newOpaqueWrap = await rewrapForMethod(
-            { blob: recoveryBlob, secret: recovSecret, method: 'recovery' },
-            { secret: exportKey, method: 'opaque' },
-          );
-          await transport.putWraps({ credentialId, wraps: { opaque: b64(newOpaqueWrap) } });
-        } finally {
-          exportKey.fill(0);
-          recovSecret.fill(0);
-        }
-      },
-      dispose(): void {
-        // Zero the recovery secret when finished WITHOUT re-keying. Idempotent with the resetPassword
-        // wipe; after this, resetPassword would fail (a zeroed secret cannot unwrap the recovery blob).
-        recovSecret.fill(0);
-      },
-    };
-  }
+  /**
+   * 🔴 `recoverWithPhrase` WAS REMOVED IN 0.2.0. Use `recoverWithRecoveryIdentity`.
+   *
+   * The old method derived the recovery secret from the phrase LOCALLY and unwrapped the VMK in the
+   * browser. The server never saw the phrase and therefore never verified it — which meant it could
+   * not rate-limit guessing, and had to hand the recovery wrap to whoever asked. That is the design
+   * the 08-08-2026 audit condemned, and it does not ship in a public Apache-2.0 package.
+   *
+   * The replacement runs a real OPAQUE ceremony against a SECOND identity on the account. The server
+   * verifies the phrase, throttles attempts, and releases the vault and the wrap only afterwards.
+   */
 
   /** Enable passwordless unlock (ADDITIVE). RE-AUTHENTICATES with the password (a non-extractable
    *  session VMK cannot be re-wrapped), then re-wraps the VMK from the 'opaque' wrap into a 'webauthn'
@@ -265,32 +239,184 @@ export class Tessera {
    *  'opaque' wrap into a new 'recovery' wrap under the new phrase's secret. The vault
    *  is never re-encrypted, and the OLD phrase's wrap is overwritten. Returns the new
    *  phrase to show ONCE. export_key and recovery entropy are zeroed after use. */
-  async regenerateRecovery({
+  /**
+   * Recover with the phrase, via the account's RECOVERY OPAQUE identity.
+   *
+   * Replaces `recoverWithPhrase`. The difference is not cosmetic: the server now runs an OPAQUE
+   * ceremony against a second record, so it VERIFIES the phrase, can throttle guesses, and releases
+   * the encrypted vault and the recovery wrap only after that ceremony succeeds. The old method
+   * proved nothing to anyone and required the wrap to be readable by whoever asked.
+   *
+   * 🔑 Two secrets, both from the same phrase, deliberately kept apart:
+   *   - `recoveryPhrasePassword(phrase)` authenticates — it goes into OPAQUE.
+   *   - `recoverySecret(phrase)` (the BIP-39 entropy) decrypts — it opens the `recovery` wrap.
+   * Reusing one for both would put the wrap secret through the ceremony and couple them.
+   *
+   * The returned `resetToken` is what `POST /auth/recovery/opaque/reset` requires; it is the
+   * server's evidence that this caller proved possession, and it is single-use.
+   */
+  async recoverWithRecoveryIdentity({
+    email,
+    phrase,
+  }: {
+    email: string;
+    phrase: string;
+  }): Promise<RecoverySession & { resetToken: string; encryptedVaultB64: string }> {
+    const blindIndex = blindIndexString(email);
+    const phrasePassword = recoveryPhrasePassword(phrase); // throws on a bad checksum
+    let entropy: Uint8Array | undefined;
+    let exportKey: Uint8Array | undefined;
+    try {
+      const res = await recoveryLoginOpaque(this.transport, blindIndex, phrasePassword);
+      exportKey = res.exportKey;
+      if (!res.recoveryWrappedKeyB64) {
+        // The server proved the phrase but holds no wrap for it. That is the half-written state
+        // ciphera-id#68 made unrepresentable going forward; say so plainly rather than throwing a
+        // decryption error the user would read as "wrong phrase".
+        throw new Error('tessera: this account has a recovery identity but no recovery wrap');
+      }
+      entropy = recoverySecret(phrase);
+      const recoveryBlob = fromB64(res.recoveryWrappedKeyB64);
+      const vmk = await openVaultKey(recoveryBlob, entropy, 'recovery');
+
+      // Retained for resetPassword ONLY, and zeroed by it or by dispose(). The session VMK is a
+      // non-extractable CryptoKey and cannot be re-wrapped, so the reset has to re-derive the raw
+      // key from this blob — the same reason the old API held it, on a mechanism that now has the
+      // server's verification in front of it.
+      const heldEntropy = entropy;
+      entropy = undefined; // ownership moves into the closures below
+      const transport = this.transport;
+      const { resetToken, encryptedVaultB64 } = res;
+
+      return {
+        // No OPAQUE session key on this path: recovery proves the phrase, not a login.
+        ...sessionFor(vmk, null),
+        resetToken,
+        encryptedVaultB64,
+        async resetPassword(newPassword: Uint8Array): Promise<void> {
+          const reg = createRegistrationHandle(newPassword);
+          try {
+            const { responseB64 } = await transport.registerStart({
+              requestB64: toBase64Std(reg.request),
+              credentialId: blindIndex,
+            });
+            const fin = reg.finish(newPassword, fromBase64Std(responseB64));
+            try {
+              // Re-wrap the SAME VMK under the new export_key. The vault is never re-encrypted.
+              const newOpaqueWrap = await rewrapForMethod(
+                { blob: recoveryBlob, secret: heldEntropy, method: 'recovery' },
+                { secret: fin.exportKey, method: 'opaque' },
+              );
+              // 🔴 BOTH wraps travel. Sending only the opaque one would leave the account with a
+              // recovery record whose wrap the server no longer holds — the exact half-written
+              // state ciphera-id#68 exists to prevent, arrived at from the other side.
+              await transport.recoveryResetPassword({
+                resetToken,
+                blindIndex,
+                encryptedVaultB64,
+                opaqueWrappedKeyB64: b64(newOpaqueWrap),
+                registrationUploadB64: toBase64Std(fin.upload),
+                credentialIdB64: blindIndex,
+                recoveryWrappedKeyB64: b64(recoveryBlob),
+              });
+            } finally {
+              fin.free();
+            }
+          } finally {
+            reg.free();
+            heldEntropy.fill(0);
+          }
+        },
+        dispose(): void {
+          heldEntropy.fill(0);
+        },
+      };
+    } finally {
+      phrasePassword.fill(0);
+      entropy?.fill(0);
+      exportKey?.fill(0);
+    }
+  }
+
+  /**
+   * Enrol (or ROTATE) the account's recovery identity.
+   *
+   * Mints a fresh phrase, registers it as a second OPAQUE identity, and re-wraps the SAME VMK under
+   * its entropy — then sends the record and the wrap in ONE request, because an account holding one
+   * without the other passes recovery login and cannot decrypt.
+   *
+   * Requires the password: the VMK is non-extractable from a session, so it has to be re-derived
+   * from a live ceremony. `reauthToken` is a fresh proof for purpose `enr` — replacing this record
+   * installs a permanent second way into the account, so a stolen session must not be enough.
+   *
+   * Returns the new phrase. Show it ONCE; it cannot be recovered from the server, which is the
+   * point.
+   */
+  async enrolRecoveryIdentity({
     email,
     password,
+    reauthToken,
   }: {
     email: string;
     password: Uint8Array;
+    reauthToken: string;
   }): Promise<{ recoveryPhrase: string }> {
     const credentialId = blindIndexString(email);
     const { exportKey } = await loginOpaque(this.transport, credentialId, password);
-    let recovEntropy: Uint8Array | undefined;
+    let entropy: Uint8Array | undefined;
+    let phrasePassword: Uint8Array | undefined;
     try {
       const opaqueWrap = await this.transport.getWrap({ credentialId, method: 'opaque' });
       if (!opaqueWrap) throw new Error('tessera: no opaque wrap for this account');
+
       const recoveryPhrase = newRecoveryPhrase();
-      recovEntropy = recoverySecret(recoveryPhrase);
-      const newRecoveryWrap = await rewrapForMethod(
+      entropy = recoverySecret(recoveryPhrase);
+      phrasePassword = recoveryPhrasePassword(recoveryPhrase);
+
+      // Re-wrap the SAME VMK. The vault is never re-encrypted.
+      const recoveryWrap = await rewrapForMethod(
         { blob: fromB64(opaqueWrap.blobB64), secret: exportKey, method: 'opaque' },
-        { secret: recovEntropy, method: 'recovery' },
+        { secret: entropy, method: 'recovery' },
       );
-      await this.transport.putWraps({ credentialId, wraps: { recovery: b64(newRecoveryWrap) } });
+      const { uploadB64 } = await registerRecoveryIdentity(
+        this.transport,
+        credentialId,
+        phrasePassword,
+      );
+
+      // One call: record + wrap, or neither.
+      await this.transport.enrolRecoveryIdentity({
+        uploadB64,
+        credentialIdB64: credentialId,
+        recoveryWrappedKeyB64: b64(recoveryWrap),
+        reauthToken,
+      });
       return { recoveryPhrase };
     } finally {
       exportKey.fill(0);
-      recovEntropy?.fill(0);
+      entropy?.fill(0);
+      phrasePassword?.fill(0);
     }
   }
+
+  /**
+   * 🔴 `regenerateRecovery` WAS REMOVED IN 0.2.0. Use `enrolRecoveryIdentity`, which is the same
+   * rotation done safely.
+   *
+   * It rotated the phrase by writing the new `recovery` WRAP and nothing else — it never touched
+   * the recovery OPAQUE record. On an account that has enrolled, that leaves the record
+   * authenticating the OLD phrase while the wrap is sealed under the NEW one:
+   *
+   *   - the old phrase passes the ceremony and then cannot decrypt;
+   *   - the new phrase fails the ceremony outright.
+   *
+   * Recovery is dead, with no error at rotation time and no symptom until the day it is needed.
+   * That is the identical half-written state `ciphera-id#68` made unrepresentable on the server,
+   * arrived at from the client side — so the method that produces it does not survive either.
+   *
+   * `enrolRecoveryIdentity` mints the phrase, registers the record AND re-wraps the VMK, and sends
+   * both to the server in one request that writes them in a single statement.
+   */
 }
 
 /** @internal Exposed for the recovery/passkey methods added in later tasks (not re-exported from index). */

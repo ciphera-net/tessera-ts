@@ -81,6 +81,15 @@ export async function startSidecarTransport(): Promise<SidecarTransport> {
   const passwordFiles = new Map<string, string>(); // credentialId → password_file_b64
   const wraps = new Map<string, Record<string, string>>(); // credentialId → { method → blobB64 }
 
+  // The RECOVERY identity: a SECOND password file on the same account, plus the VMK wrap sealed
+  // under the same phrase. Held in ONE map so the double cannot represent a state the real server
+  // made impossible in ciphera-id#68 — a record without its wrap, which passes recovery login and
+  // then cannot decrypt.
+  const recoveryIdentities = new Map<string, { passwordFile: string; wrapB64: string }>();
+  const loginBlindIndex = new Map<string, string>(); // loginId → blindIndex, for the finish step
+  const vaults = new Map<string, string>(); // blindIndex → encrypted vault, set by tests
+  let nextResetToken = 0;
+
   const transport: Transport = {
     async registerStart({ requestB64, credentialId }) {
       const r = await rpc(socket, { op: 'register_start', request_b64: requestB64, credential_id: credentialId });
@@ -118,6 +127,66 @@ export async function startSidecarTransport(): Promise<SidecarTransport> {
     async getWrap({ credentialId, method }) {
       const blobB64 = wraps.get(credentialId)?.[method];
       return blobB64 ? { blobB64 } : null;
+    },
+
+    async enrolRecoveryIdentity({ uploadB64, credentialIdB64, recoveryWrappedKeyB64 }) {
+      const r = await rpc(socket, { op: 'register_finish', upload_b64: uploadB64 });
+      if (r.result !== 'register_finish') throw new Error(`enrolRecoveryIdentity: ${JSON.stringify(r)}`);
+      // Record AND wrap, together — the double mirrors the server's single UPDATE.
+      recoveryIdentities.set(credentialIdB64, {
+        passwordFile: r.password_file_b64,
+        wrapB64: recoveryWrappedKeyB64,
+      });
+    },
+
+    async recoveryLoginStart({ requestB64, blindIndex }) {
+      const r = await rpc(socket, {
+        op: 'login_start',
+        request_b64: requestB64,
+        // 🔴 An unenrolled account passes null, exactly as the real handler does, so the sidecar
+        // answers with a timing-safe dummy and the caller cannot tell "no such account" from
+        // "wrong phrase". A double that threw here would hide the property under test.
+        password_file_b64: recoveryIdentities.get(blindIndex)?.passwordFile ?? null,
+        credential_id: blindIndex,
+      });
+      if (r.result !== 'login_start') throw new Error(`recovery login_start: ${JSON.stringify(r)}`);
+      loginBlindIndex.set(r.login_id, blindIndex);
+      return { loginId: r.login_id, responseB64: r.response_b64 };
+    },
+
+    async recoveryLoginFinish({ loginId, finalizationB64 }) {
+      const r = await rpc(socket, { op: 'login_finish', login_id: loginId, finalization_b64: finalizationB64 });
+      if (r.result !== 'login_finish') throw new Error(`recovery login_finish: ${JSON.stringify(r)}`);
+      const blindIndex = loginBlindIndex.get(loginId) ?? '';
+      loginBlindIndex.delete(loginId);
+      // The vault and the wrap are released ONLY here — after the ceremony proved the phrase.
+      return {
+        resetToken: `reset-${++nextResetToken}`,
+        encryptedVaultB64: vaults.get(blindIndex) ?? '',
+        recoveryWrappedKeyB64: recoveryIdentities.get(blindIndex)?.wrapB64 ?? '',
+      };
+    },
+
+    async recoveryResetPassword({
+      registrationUploadB64,
+      credentialIdB64,
+      opaqueWrappedKeyB64,
+      recoveryWrappedKeyB64,
+      encryptedVaultB64,
+      blindIndex,
+    }) {
+      const r = await rpc(socket, { op: 'register_finish', upload_b64: registrationUploadB64 });
+      if (r.result !== 'register_finish') throw new Error(`recovery reset: ${JSON.stringify(r)}`);
+      // Mirrors the server's single UPDATE: new auth record, both wraps, vault carried forward.
+      passwordFiles.set(credentialIdB64, r.password_file_b64);
+      wraps.set(credentialIdB64, {
+        ...(wraps.get(credentialIdB64) ?? {}),
+        opaque: opaqueWrappedKeyB64,
+        recovery: recoveryWrappedKeyB64,
+      });
+      const existing = recoveryIdentities.get(blindIndex);
+      if (existing) recoveryIdentities.set(blindIndex, { ...existing, wrapB64: recoveryWrappedKeyB64 });
+      if (encryptedVaultB64) vaults.set(blindIndex, encryptedVaultB64);
     },
   };
 

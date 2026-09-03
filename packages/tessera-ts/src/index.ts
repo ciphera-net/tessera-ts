@@ -2,7 +2,7 @@
 export { Tessera, type Session, type RecoverySession } from './tessera.js';
 export { init } from './wasm.js';
 export { blindIndexString } from './blindIndex.js';
-export { newRecoveryPhrase } from './recovery.js';
+export { newRecoveryPhrase, recoveryPhrasePassword } from './recovery.js';
 export {
   isPasskeySupported,
   evaluatePrf,

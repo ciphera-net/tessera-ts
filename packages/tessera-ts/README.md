@@ -93,8 +93,8 @@ const transport: Transport = {
     return res.json(); // { sessionKeyB64: string }
   },
 
-  // Recovery password reset — replaces the server-side password file after the OPAQUE re-enrollment
-  // driven by recoverWithPhrase().resetPassword(). Vault content is untouched.
+  // Password reset outside recovery. The RECOVERY-driven reset goes through
+  // recoveryResetPassword() instead, which is authorised by a reset token and carries both wraps.
   async replacePasswordFile({ credentialId, uploadB64 }) {
     await fetch('/auth/reset-password', {
       method: 'POST',
@@ -159,20 +159,50 @@ const plaintext = await session.vault.open('address', envelope);
 
 ### 5. Recovery
 
+Recovery runs a real OPAQUE ceremony against a **second identity** on the account, authenticated by
+the phrase. The server verifies the phrase, can throttle guessing, and releases the vault and the
+recovery wrap only afterwards.
+
+**Enrol (or rotate) the recovery identity.** Needs the password — the VMK is non-extractable from a
+session and has to be re-derived — and a fresh re-auth proof, because this installs a permanent
+second way into the account.
+
 ```ts
-const rec = await t.recoverWithPhrase({
+const { recoveryPhrase } = await t.enrolRecoveryIdentity({
   email: 'alice@example.com',
-  phrase: 'word1 word2 ... word24', // the 24-word BIP-39 phrase from registration
+  password: new TextEncoder().encode('password'),
+  reauthToken,            // purpose "enr", single-use
+});
+// Show recoveryPhrase ONCE. It cannot be recovered from the server, which is the point.
+```
+
+**Recover with the phrase.**
+
+```ts
+const rec = await t.recoverWithRecoveryIdentity({
+  email: 'alice@example.com',
+  phrase: 'word1 word2 ... word24',
 });
 
-// rec is a RecoverySession — a Session extended with resetPassword.
-// rec.sessionKeyB64 is null (no OPAQUE handshake on this path).
-// Vault is fully accessible while the session is alive.
+// rec.sessionKeyB64 is null — recovery proves the phrase, it is not a login.
+// rec.resetToken is the server's single-use evidence that the ceremony succeeded.
+// The vault is fully accessible while the session is alive.
 
-// Optionally reset the password (re-keys auth; vault content is never re-encrypted).
 await rec.resetPassword(new TextEncoder().encode('new password'));
-// After resetPassword, the recovery secret is zeroed; calling resetPassword again will fail.
+// Re-keys auth only; vault content is never re-encrypted. The recovery identity keeps working.
+// If you do NOT reset, call rec.dispose() to zero the retained recovery secret.
 ```
+
+> #### 🔴 Removed in 0.2.0
+>
+> **`recoverWithPhrase`** derived the recovery secret locally and unwrapped the VMK in the browser.
+> The server never saw the phrase, so it could not verify it, could not rate-limit guessing, and had
+> to hand the recovery wrap to whoever asked. Replaced by `recoverWithRecoveryIdentity`.
+>
+> **`regenerateRecovery`** rotated the phrase by writing the new wrap and nothing else, leaving the
+> recovery record on the OLD phrase — the old phrase then passed the ceremony and could not decrypt,
+> the new phrase failed it, and recovery was dead with no error at rotation time. Rotation now goes
+> through `enrolRecoveryIdentity`, which writes the record and the wrap in one server-side statement.
 
 ### 6. Passkey (WebAuthn-PRF)
 
@@ -337,7 +367,7 @@ AAD = [0x01] ‖ utf8(context)
 ### What the SDK does
 
 - The vault master key (VMK) is held as a **non-extractable `CryptoKey`** inside the `Session` object. `extractable: false` prevents `crypto.subtle.exportKey` from returning the raw bytes.
-- The OPAQUE `export_key` (64 bytes) and the recovery entropy (32 bytes) transit WASM/JS linear memory transiently during unlock. On the register / login / passkey paths they are zeroed in `finally` blocks immediately after the VMK is wrapped or unwrapped. **Exception:** `recoverWithPhrase` retains the 32-byte recovery secret inside the returned `RecoverySession` — the non-extractable VMK cannot itself be re-wrapped, so `resetPassword` needs it. That secret is zeroed by `resetPassword` **or** by `RecoverySession.dispose()`; if you call neither, it persists for the session's lifetime (discard the session promptly). None of these values ever cross the network.
+- The OPAQUE `export_key` (64 bytes) and the recovery entropy (32 bytes) transit WASM/JS linear memory transiently during unlock. On the register / login / passkey paths they are zeroed in `finally` blocks immediately after the VMK is wrapped or unwrapped. **Exception:** `recoverWithRecoveryIdentity` retains the 32-byte recovery entropy inside the returned session — the non-extractable VMK cannot itself be re-wrapped, so `resetPassword` needs it. That secret is zeroed by `resetPassword` **or** by `dispose()`; if you call neither, it persists for the session's lifetime (discard the session promptly). The phrase's aPAKE password and the ceremony's `export_key` are both zeroed before the call returns. None of these values ever cross the network.
 - VMK-wrap blobs stored server-side are opaque byte sequences. The server holds no plaintext passwords and no vault keys.
 
 ### What the SDK cannot guarantee

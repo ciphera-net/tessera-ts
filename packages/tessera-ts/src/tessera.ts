@@ -26,9 +26,55 @@ export interface Session {
   // null on the recovery / passkey unlock paths: those do NOT run an OPAQUE handshake, so there is no
   // OPAQUE session key (nullable, NOT an empty-string sentinel — the consumer handles null).
   sessionKeyB64: string | null;
-  vault: {
-    seal(context: string, plaintext: Uint8Array): Promise<Uint8Array>;
-    open(context: string, envelope: Uint8Array): Promise<Uint8Array>;
+  vault: VaultOps;
+  /**
+   * The VMK that backs `vault`, exposed so a host can PERSIST the unlocked state.
+   *
+   * This grants no capability the host did not already have: anything holding a
+   * Session can already call `vault.open()` and `vault.seal()`. What it adds is
+   * REACHABILITY — `vault` is a pair of closures, and functions are not
+   * structured-cloneable, so a Session cannot be put in IndexedDB. A `VaultKey`
+   * is a `CryptoKey` and can be, which is the whole difference between "unlocked
+   * for this page" and "unlocked on this device".
+   *
+   * 🔴 IT IS ALWAYS NON-EXTRACTABLE. Every VaultKey in this SDK is produced by
+   * `importVaultKey`, which imports with `extractable: false` and usage
+   * `['deriveKey']`. So there are no key bytes in JS to read, copy or exfiltrate
+   * — a holder gets USE of the key on that device, never a copy of it. A host
+   * that stores one should nonetheless assert `extractable === false` on the way
+   * in, so that a future SDK regression fails loudly instead of quietly
+   * persisting exportable key material.
+   *
+   * ⚠️ WHETHER TO PERSIST IT IS THE HOST'S DECISION, AND ITS THREAT MODEL.
+   * Storing it does not weaken zero-knowledge against the server: the server
+   * still never sees the key or the plaintext. It weakens it against whoever
+   * holds the unlocked device, and it widens the window for a script that gets
+   * onto the page — from "can wait for an unlock" to "can open the vault
+   * immediately". This SDK takes no position; it stops hiding the object.
+   *
+   * Rebuild the ops from a stored key with `vaultOpsFor(vaultKey)`.
+   */
+  vaultKey: VaultKey;
+}
+
+/** The seal/open pair a `VaultKey` backs. Named so a host can type a rebuilt pair. */
+export interface VaultOps {
+  seal(context: string, plaintext: Uint8Array): Promise<Uint8Array>;
+  open(context: string, envelope: Uint8Array): Promise<Uint8Array>;
+}
+
+/**
+ * Rebuild `Session['vault']` from a `VaultKey` — for a host that persisted the
+ * key and wants the same ops back without re-running a ceremony.
+ *
+ * This is exactly what every Session is built with; it is exported so that a
+ * restored key and a freshly unlocked one produce the SAME object shape, rather
+ * than each host re-implementing the pair and drifting on the context argument.
+ */
+export function vaultOpsFor(vaultKey: VaultKey): VaultOps {
+  return {
+    seal: (context, plaintext) => vaultSeal(vaultKey, context, plaintext),
+    open: (context, envelope) => vaultOpen(vaultKey, context, envelope),
   };
 }
 
@@ -45,13 +91,10 @@ export interface RecoverySession extends Session {
 }
 
 function sessionFor(vmk: VaultKey, sessionKeyB64: string | null): Session {
-  return {
-    sessionKeyB64,
-    vault: {
-      seal: (context, plaintext) => vaultSeal(vmk, context, plaintext),
-      open: (context, envelope) => vaultOpen(vmk, context, envelope),
-    },
-  };
+  // ONE construction site for every Session this SDK returns, which is why
+  // adding `vaultKey` here covers register, login, recovery and the passkey
+  // unlock without touching any of them.
+  return { sessionKeyB64, vault: vaultOpsFor(vmk), vaultKey: vmk };
 }
 
 export class Tessera {

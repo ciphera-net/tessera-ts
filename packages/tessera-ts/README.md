@@ -297,6 +297,45 @@ An envelope sealed under `"address"` cannot be opened under `"totp"` — wrong-c
 
 For wrong-key, wrong-context, and GCM tag failure, `open` throws a generic `Error` — there is no specific class that reveals which check failed (no decryption oracle).
 
+### Keeping the vault unlocked across page loads (0.3.0, additive)
+
+`Session.vault` is a pair of **closures**, so a `Session` cannot be persisted —
+functions are not structured-cloneable. `Session.vaultKey` exposes the VMK
+itself, which is a `CryptoKey` and therefore *can* be stored (IndexedDB), and
+`vaultOpsFor` rebuilds the same `seal`/`open` pair from it:
+
+```ts
+import { vaultOpsFor, type VaultKey } from '@ciphera-net/tessera';
+
+// after a ceremony — store the key, not the session
+if (session.vaultKey.extractable) throw new Error('refusing to persist an extractable key');
+await idbPut('vault-keys', userId, session.vaultKey);
+
+// on a later page load — no ceremony, no password
+const key = (await idbGet('vault-keys', userId)) as VaultKey | undefined;
+const vault = key ? vaultOpsFor(key) : null;
+const plaintext = await vault?.open('address', envelope);
+```
+
+🔴 **The key is always non-extractable** — every `VaultKey` is produced by
+`importVaultKey`, which imports with `extractable: false` and usage
+`['deriveKey']`. There are no key bytes in JS to read or copy: a holder gets
+*use* of the key on that device, never a copy of it. Assert `extractable ===
+false` before storing anyway, so a future regression fails loudly rather than
+quietly persisting exportable key material.
+
+⚠️ **Whether to persist it is YOUR decision and YOUR threat model.** Storing the
+key does not weaken zero-knowledge against the server — it still never sees the
+key or the plaintext. It weakens it against **whoever holds the unlocked
+device**, and it widens the window for a script that gets onto the page, from
+"can wait for an unlock" to "can open the vault immediately". If you do store
+it, the minimum discipline is: clear it on sign-out in the same call that clears
+the session; key it by user id and clear it when that id changes; give it a
+lifetime no longer than your refresh token's; IndexedDB only, never
+`localStorage` (which cannot hold a `CryptoKey` at all, so anything that made it
+fit would mean serialising key bytes); and tell the user which state they are
+in, with a way to undo it.
+
 ### OPAQUE ceremony errors
 
 The register/login ceremonies raise two further classes. Both carry a fixed
@@ -410,6 +449,8 @@ AAD = [0x01] ‖ utf8(context)
 - VMK-wrap blobs stored server-side are opaque byte sequences. The server holds no plaintext passwords and no vault keys.
 
 ### What the SDK cannot guarantee
+
+**A persisted key removes the wait, not the ceiling.** Since 0.3.0 `Session.vaultKey` lets a host keep the vault unlocked across page loads. That does not hand a page any capability it lacked — a page holding a `Session` could already `seal` and `open` at will — but it removes the requirement that a *user action* happen first. See "Keeping the vault unlocked across page loads" for the trade and the minimum discipline.
 
 **Non-extractable is an API-layer guard, not process isolation.** A compromised page (XSS, malicious dependency, compromised browser extension) can still *use* the non-extractable key to seal/open arbitrary records. It cannot export the raw VMK bytes via `exportKey`, but it can call `session.vault.seal` and `session.vault.open` freely. Non-extractable does not defend against a compromised execution context.
 

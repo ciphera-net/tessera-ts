@@ -63,7 +63,7 @@ when:
 steps:
   # The ONE build. Everything below consumes its output from the shared workspace.
   build:
-    image: rust:1
+    image: registry.ops.ciphera.net/mirror/docker.io/library/rust:1-d841af61827b@sha256:d841af61827b29b3efa46f5363e8f2e972b379cc0463c319e8f320d9f0c8eb0c
     # Resources declared 29-07-2026 — without them the step pod is QoS BestEffort,
     # first evicted under node memory pressure. Estate-wide sweep after two
     # pulse-backend steps were SIGKILLed (exit 137) mid-download, presenting as a
@@ -191,7 +191,7 @@ steps:
         # read must never fail a green build.
         sccache --show-stats 2>/dev/null | grep -E 'Cache hits|Cache misses|Cache errors|Cache hits rate' || true
   handshake:
-    image: node:24
+    image: registry.ops.ciphera.net/mirror/docker.io/library/node:24-8544b46b91d1@sha256:8544b46b91d1a8c8bf8fc0d53ae9f276ed07d0ffa9098dc4a9c2f627363a13a0
     backend_options:
       kubernetes:
         resources:
@@ -207,7 +207,7 @@ steps:
   # vitest shells out to `go run` from the parity harness dirs, so `go` must be on
   # PATH in THIS container; the node:24 image has none.
   ts-tests:
-    image: node:24
+    image: registry.ops.ciphera.net/mirror/docker.io/library/node:24-8544b46b91d1@sha256:8544b46b91d1a8c8bf8fc0d53ae9f276ed07d0ffa9098dc4a9c2f627363a13a0
     backend_options:
       kubernetes:
         resources:
@@ -235,7 +235,7 @@ steps:
   # The Playwright image (v1.48.2-jammy, matching @playwright/test ^1.48.0)
   # preinstalls the chromium+webkit system deps.
   browser:
-    image: mcr.microsoft.com/playwright:v1.48.2-jammy
+    image: registry.ops.ciphera.net/mirror/mcr.microsoft.com/playwright:v1.48.2-jammy@sha256:ca6450233e72d43475836930f32bad51cff9258794c6f5f506264dda4276b2cf
     backend_options:
       kubernetes:
         resources:
